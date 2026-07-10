@@ -6,24 +6,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { SignJWT } from 'jose'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
-import { logAdminAction } from '@/lib/audit'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> }
 ) {
   const guard = await requirePermission('users:impersonate')
   if (!guard.ok) return guard.response
 
-  const { rows } = await db.query(`SELECT id, name FROM users WHERE id = $1`, [params.userId])
+  const { userId } = await params
+
+  const { rows } = await db.query(`SELECT id, name FROM users WHERE id = $1`, [userId])
   if (rows.length === 0) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
 
   const secret = new TextEncoder().encode(process.env.IMPERSONATION_JWT_SECRET!)
   const token = await new SignJWT({
-    sub: params.userId,
-    impersonatedBy: guard.admin.id,
+    sub: userId,
+    impersonatedBy: guard.admin.adminId,
     scope: 'impersonation',
   })
     .setProtectedHeader({ alg: 'HS256' })
@@ -32,13 +34,14 @@ export async function POST(
     .sign(secret)
 
   await logAdminAction({
-    adminId: guard.admin.id,
-    adminEmail: guard.admin.email,
+    adminId: guard.admin.adminId,
+    adminEmail: guard.admin.adminEmail,
     action: 'user.impersonation_started',
     resourceType: 'user',
-    resourceId: params.userId,
+    resourceId: userId,
     notes: `Impersonation token issued, 20 minute TTL`,
-    req,
+    ip: getClientIp(req),
+    userAgent: req.headers.get('user-agent') ?? undefined,
   })
 
   return NextResponse.json({

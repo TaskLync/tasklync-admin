@@ -2,14 +2,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
-import { logAdminAction } from '@/lib/audit'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> }
 ) {
   const guard = await requirePermission('users:warn')
   if (!guard.ok) return guard.response
+
+  const { userId } = await params
 
   const body = await req.json().catch(() => ({}))
   const reason: string = body.reason?.trim()
@@ -19,7 +21,7 @@ export async function POST(
 
   const { rows: before } = await db.query(
     `SELECT warning_count FROM users WHERE id = $1`,
-    [params.userId]
+    [userId]
   )
   if (before.length === 0) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
@@ -33,19 +35,20 @@ export async function POST(
          updated_at = now()
      WHERE id = $1
      RETURNING warning_count, last_warning_at`,
-    [params.userId, reason]
+    [userId, reason]
   )
 
   await logAdminAction({
-    adminId: guard.admin.id,
-    adminEmail: guard.admin.email,
+    adminId: guard.admin.adminId,
+    adminEmail: guard.admin.adminEmail,
     action: 'user.warned',
     resourceType: 'user',
-    resourceId: params.userId,
+    resourceId: userId,
     oldValue: { warningCount: before[0].warning_count },
     newValue: { warningCount: rows[0].warning_count, reason },
     notes: reason,
-    req,
+    ip: getClientIp(req),
+    userAgent: req.headers.get('user-agent') ?? undefined,
   })
 
   return NextResponse.json({ ok: true, warningCount: rows[0].warning_count })

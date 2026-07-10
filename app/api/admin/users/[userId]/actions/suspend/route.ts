@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
-import { logAdminAction } from '@/lib/audit'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 
 const DURATIONS: Record<string, number> = {
   '7d': 7,
@@ -11,10 +11,12 @@ const DURATIONS: Record<string, number> = {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> }
 ) {
   const guard = await requirePermission('users:suspend')
   if (!guard.ok) return guard.response
+
+  const { userId } = await params
 
   const body = await req.json().catch(() => ({}))
   const reason: string = body.reason?.trim()
@@ -49,8 +51,8 @@ export async function POST(
      WHERE id = $1
      RETURNING suspended_until`,
     duration === 'custom'
-      ? [params.userId, customUntil, reason, guard.admin.id]
-      : [params.userId, null, reason, guard.admin.id]
+      ? [userId, customUntil, reason, guard.admin.adminId]
+      : [userId, null, reason, guard.admin.adminId]
   )
 
   if (rows.length === 0) {
@@ -58,14 +60,15 @@ export async function POST(
   }
 
   await logAdminAction({
-    adminId: guard.admin.id,
-    adminEmail: guard.admin.email,
+    adminId: guard.admin.adminId,
+    adminEmail: guard.admin.adminEmail,
     action: 'user.suspended',
     resourceType: 'user',
-    resourceId: params.userId,
+    resourceId: userId,
     newValue: { suspendedUntil: rows[0].suspended_until, reason },
     notes: reason,
-    req,
+    ip: getClientIp(req),
+    userAgent: req.headers.get('user-agent') ?? undefined,
   })
 
   return NextResponse.json({ ok: true, suspendedUntil: rows[0].suspended_until })
