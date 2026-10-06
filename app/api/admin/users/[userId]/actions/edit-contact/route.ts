@@ -1,3 +1,4 @@
+
 // app/api/admin/users/[userId]/actions/edit-contact/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
@@ -6,8 +7,10 @@ import { logAdminAction, getClientIp } from '@/lib/audit'
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { userId: string } }
+  { params }: { params: Promise<{ userId: string }> }
 ) {
+  const { userId } = await params
+
   const guard = await requirePermission('users:edit')
   if (!guard.ok) return guard.response
 
@@ -16,29 +19,50 @@ export async function PATCH(
   const email: string | undefined = body.email?.trim()
 
   if (!phone && !email) {
-    return NextResponse.json({ error: 'Provide a phone and/or email to update' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'Provide a phone and/or email to update' },
+      { status: 400 }
+    )
   }
 
   const { rows: before } = await db.query(
     `SELECT phone, email FROM users WHERE id = $1`,
-    [params.userId]
+    [userId]
   )
+
   if (before.length === 0) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
 
   const sets: string[] = []
-  const values: any[] = [params.userId]
+  const values: any[] = [userId]
   let i = 2
-  if (phone) { sets.push(`phone = $${i}`); values.push(phone); i++ }
-  if (email) { sets.push(`email = $${i}`); values.push(email); i++ }
+
+  if (phone) {
+    sets.push(`phone = $${i}`)
+    values.push(phone)
+    i++
+  }
+
+  if (email) {
+    sets.push(`email = $${i}`)
+    values.push(email)
+    i++
+  }
+
   sets.push('updated_at = now()')
 
   try {
-    await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $1`, values)
+    await db.query(
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $1`,
+      values
+    )
   } catch (err: any) {
     if (err?.code === '23505') {
-      return NextResponse.json({ error: 'That phone or email is already in use' }, { status: 409 })
+      return NextResponse.json(
+        { error: 'That phone or email is already in use' },
+        { status: 409 }
+      )
     }
     throw err
   }
@@ -48,9 +72,12 @@ export async function PATCH(
     adminEmail: guard.admin.adminEmail,
     action: 'user.contact_edited',
     resourceType: 'user',
-    resourceId: params.userId,
+    resourceId: userId,
     oldValue: before[0],
-    newValue: { phone: phone ?? before[0].phone, email: email ?? before[0].email },
+    newValue: {
+      phone: phone ?? before[0].phone,
+      email: email ?? before[0].email,
+    },
     ip: getClientIp(req),
     userAgent: req.headers.get('user-agent') ?? undefined,
   })
