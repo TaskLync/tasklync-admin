@@ -28,6 +28,12 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'users:ban':           ['SUPER_ADMIN'],
   'users:edit':          ['SUPER_ADMIN', 'OPS'],
   'users:impersonate':   ['SUPER_ADMIN'],
+  // Categories & Services
+  'categories:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'categories:create': ['SUPER_ADMIN'],
+  'categories:edit': ['SUPER_ADMIN'],
+  'services:edit': ['SUPER_ADMIN'],
+
 }
 
 // Maps URL path prefixes -> required permission, used by middleware.ts
@@ -38,6 +44,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/payments', permission: 'payments:view' },
   { prefix: '/disputes', permission: 'disputes:view' },
   { prefix: '/analytics', permission: 'analytics:view' },
+  { prefix: '/categories', permission: 'categories:view' },
   { prefix: '/settings', permission: 'settings:view' },
 ]
 

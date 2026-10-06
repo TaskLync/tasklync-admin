@@ -22,6 +22,7 @@ export function KpiCard({
   color,
 }: KpiCardProps) {
   const [clicked, setClicked] = useState(false)
+
   const isPositive = (changePct ?? 0) >= 0
   const isColored = Boolean(color) && !clicked
 
@@ -29,7 +30,7 @@ export function KpiCard({
     <Card
       onClick={() => setClicked((c) => !c)}
       className={cn(
-        'flex flex-col gap-2 p-4 transition-colors duration-150',
+        'flex min-h-[150px] flex-col gap-2 p-4 transition-colors duration-150',
         color && 'cursor-pointer'
       )}
       style={isColored ? { backgroundColor: color, borderColor: color } : undefined}
@@ -52,34 +53,45 @@ export function KpiCard({
         >
           {value}
         </span>
-        {sparkline.length > 0 && <Sparkline data={sparkline} positive={isPositive} />}
+
+        <div className="flex h-10 w-24 items-end justify-end">
+          {sparkline.length > 0 && (
+            <Sparkline data={sparkline} positive={isPositive} />
+          )}
+        </div>
       </div>
 
-      {changePct !== null && (
-        <div
-          className={cn(
-            'flex items-center gap-1 text-xs font-medium',
-            isColored
-              ? 'text-white/90'
-              : isPositive
-              ? 'text-[#16A34A]'
-              : 'text-[#DC2626]'
-          )}
-        >
-          {isPositive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-          {Math.abs(changePct).toFixed(1)}% vs yesterday
-        </div>
-      )}
+      <div className="mt-auto h-5">
+        {changePct !== null && (
+          <div
+            className={cn(
+              'flex items-center gap-1 text-xs font-medium',
+              isColored
+                ? 'text-white/90'
+                : isPositive
+                  ? 'text-[#16A34A]'
+                  : 'text-[#DC2626]'
+            )}
+          >
+            {isPositive ? (
+              <ArrowUpRight size={14} />
+            ) : (
+              <ArrowDownRight size={14} />
+            )}
+            {Math.abs(changePct).toFixed(1)}% vs yesterday
+          </div>
+        )}
+      </div>
     </Card>
   )
 }
 
 export function KpiCardSkeleton() {
   return (
-    <Card className="flex flex-col gap-3 p-4">
+    <Card className="flex min-h-[150px] flex-col gap-2 p-4">
       <div className="h-3 w-24 animate-pulse rounded bg-gray-200" />
       <div className="h-7 w-20 animate-pulse rounded bg-gray-200" />
-      <div className="h-3 w-28 animate-pulse rounded bg-gray-200" />
+      <div className="mt-auto h-5 w-28 animate-pulse rounded bg-gray-200" />
     </Card>
   )
 }
