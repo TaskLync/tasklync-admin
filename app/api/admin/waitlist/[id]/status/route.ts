@@ -6,9 +6,14 @@ import { logAdminAction, getClientIp } from '@/lib/audit'
 
 const VALID_STATUSES = ['pending', 'invited', 'converted']
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const guard = await requirePermission('waitlist:manage')
   if (!guard.ok) return guard.response
+
+  const { id } = await params
 
   const body = await request.json().catch(() => null)
   const status = body?.status
@@ -18,14 +23,18 @@ export async function PATCH(request: Request, { params }: { params: { id: string
   }
 
   try {
-    const existing = await db.query('SELECT status FROM waitlist WHERE id = $1', [params.id])
+    const existing = await db.query(
+      'SELECT status FROM waitlist WHERE id = $1',
+      [id]
+    )
+
     if (existing.rows.length === 0) {
       return NextResponse.json({ error: 'Entry not found' }, { status: 404 })
     }
 
     const result = await db.query(
       'UPDATE waitlist SET status = $1, updated_at = now() WHERE id = $2 RETURNING *',
-      [status, params.id]
+      [status, id]
     )
 
     await logAdminAction({
@@ -33,7 +42,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       adminEmail: guard.admin.adminEmail,
       action: 'waitlist.status_updated',
       resourceType: 'waitlist',
-      resourceId: params.id,
+      resourceId: id,
       oldValue: { status: existing.rows[0].status },
       newValue: { status },
       ip: getClientIp(request),
