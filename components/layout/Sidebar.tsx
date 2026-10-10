@@ -18,6 +18,12 @@ export function Sidebar() {
     admin ? item.allowedRoles.includes(admin.role) : false
   )
 
+  // Highlight only the most specific nav item (so /workers/verification
+  // doesn't also light up "Workers").
+  const activeHref = NAV_ITEMS.map((i) => i.href)
+    .filter((h) => (h === '/' ? pathname === '/' : pathname === h || pathname.startsWith(h + '/')))
+    .sort((a, b) => b.length - a.length)[0]
+
   async function handleLogout() {
     await fetch('/api/admin/auth/logout', { method: 'POST' })
     window.location.href = '/auth/login'
@@ -56,8 +62,7 @@ export function Sidebar() {
           ))}
         {!loading &&
           visibleItems.map((item) => {
-            const active =
-              item.href === '/' ? pathname === '/' : pathname.startsWith(item.href)
+            const active = item.href === activeHref
             const Icon = item.icon
             return (
               <Link

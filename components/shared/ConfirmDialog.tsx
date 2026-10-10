@@ -1,7 +1,7 @@
 // components/shared/ConfirmDialog.tsx
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 
@@ -9,6 +9,8 @@ interface ConfirmDialogProps {
   open: boolean
   title: string
   description?: string
+  /** Extra controls rendered between the description and the reason box. */
+  children?: ReactNode
   /** If set, the admin must type this exact string to enable the confirm button. */
   requireTypedConfirmation?: string
   /** If set, renders a required reason textarea and passes the value to onConfirm. */
@@ -23,6 +25,7 @@ export default function ConfirmDialog({
   open,
   title,
   description,
+  children,
   requireTypedConfirmation,
   requireReason,
   confirmLabel = 'Confirm',
@@ -61,11 +64,13 @@ export default function ConfirmDialog({
         <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
         {description && <p className="mt-1 text-sm text-gray-600">{description}</p>}
 
+        {children && <div className="mt-4">{children}</div>}
+
         {requireReason && (
           <div className="mt-4">
             <label className="mb-1 block text-xs font-medium text-gray-700">Reason</label>
             <textarea
-              className="h-20 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[--accent]"
+              className="h-20 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F6F5F]"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Explain why — this is logged and, in most cases, shown to the user."

@@ -1,36 +1,65 @@
-import { db } from '../lib/db'
-import { hashPassword } from '../lib/auth/password'
-import readline from 'readline'
+import 'dotenv/config'
+import { createInterface } from 'readline/promises'
+import { stdin as input, stdout as output } from 'process'
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve))
+async function prompt() {
+  const rl = createInterface({ input, output })
+  try {
+    const email = (await rl.question('Super admin email: ')).trim()
+    const fullName = (await rl.question('Full name: ')).trim()
+    const password = await rl.question(
+      'Temporary password (change after first login): '
+    )
+    return { email, fullName, password }
+  } finally {
+    rl.close()
+  }
+}
 
 async function main() {
-  // Guard: refuse to run if a super admin already exists, unless explicitly forced
+  const { hashPassword } = await import('../lib/auth/password')
+  const { db } = await import('../lib/db')
+
   const { rows } = await db.query(
-    `SELECT id FROM admin_users WHERE role = 'SUPER_ADMIN' LIMIT 1`
+    `SELECT COUNT(*)::int AS count FROM admin_users WHERE role = 'SUPER_ADMIN'`
   )
-  if (rows.length > 0 && !process.argv.includes('--force')) {
-    console.error('A super admin already exists. Use the admin panel to create additional admins,')
-    console.error('   or re-run with --force if you really want to seed another one (e.g. fresh test env).')
-    rl.close()
-    process.exit(1)
+  if (rows[0].count >= 2) {
+    console.error('Maximum of 2 super admins already exist.')
+    console.error('Additional admins must be created through the admin panel.')
+    return
   }
 
-  const email = await ask('Super admin email: ')
-  const fullName = await ask('Full name: ')
-  const password = await ask('Temporary password (change after first login): ')
+  const { email, fullName, password } = await prompt()
+
+  if (!email || !fullName || !password) {
+    console.error('Email, full name, and password are required.')
+    return
+  }
+
+  const existing = await db.query(
+    `SELECT id FROM admin_users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+    [email]
+  )
+  if (existing.rows.length > 0) {
+    console.error(`An admin account with ${email} already exists.`)
+    return
+  }
 
   const hash = await hashPassword(password)
+
   await db.query(
     `INSERT INTO admin_users (email, password_hash, full_name, role, is_active)
      VALUES ($1, $2, $3, 'SUPER_ADMIN', TRUE)`,
     [email, hash, fullName]
   )
 
-  console.log(`Super admin ${email} created. MFA setup will be required on first login.`)
-  rl.close()
-  process.exit(0)
+  console.log(`\nSuper admin ${email} created successfully.`)
+  console.log('MFA setup will be required on first login.')
 }
 
-main().catch((e) => { console.error(e); process.exit(1) })
+main()
+  .catch((e) => {
+    console.error('Failed to create super admin:', e)
+    process.exitCode = 1
+  })
+  .finally(() => process.exit())

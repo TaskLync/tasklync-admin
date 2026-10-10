@@ -2,6 +2,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/Card'
 import DataTable, { DataTableColumn } from '@/components/shared/DataTable'
 import { useUserBookings } from '@/hooks/useUsers'
@@ -20,6 +21,7 @@ const columns: DataTableColumn<UserBookingRow>[] = [
 
 export default function UserBookingHistory({ userId }: { userId: string }) {
   const { bookings, available, isLoading, error, mutate } = useUserBookings(userId)
+  const router = useRouter()
 
   return (
     <Card className="p-4">
@@ -27,7 +29,7 @@ export default function UserBookingHistory({ userId }: { userId: string }) {
       {!available ? (
         <p className="text-sm text-gray-500">
           Booking history isn't wired up yet — it'll appear here once the{' '}
-          <Link href="#" className="text-[--accent] hover:underline">Bookings page</Link> ships.
+          <Link href="/bookings" className="text-[#1F6F5F] hover:underline">Bookings page</Link> ships.
         </p>
       ) : (
         <DataTable
@@ -38,6 +40,7 @@ export default function UserBookingHistory({ userId }: { userId: string }) {
           error={error}
           onRetry={() => mutate()}
           emptyMessage="No bookings yet."
+          onRowClick={(r) => router.push(`/bookings/${r.id}`)}
         />
       )}
     </Card>

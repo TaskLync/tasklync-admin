@@ -88,7 +88,7 @@ function buildRows(data: NonNullable<ReturnType<typeof useNeedsAttention>['data'
     rows.push({
       key: 'bookings',
       label: `${data.stuckPendingBookings.length} booking${data.stuckPendingBookings.length > 1 ? 's' : ''} stuck in Pending 30min+`,
-      href: '/bookings?status=CREATED',
+      href: '/bookings?status=PENDING',
       severity: 'warning',
     })
   }
