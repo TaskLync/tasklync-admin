@@ -62,6 +62,11 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'disputes:assign': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // claim / release
   'disputes:escalate': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
   'disputes:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // internal notes
+
+  // Notifications
+  'notifications:view': ['SUPER_ADMIN', 'OPS'],
+  'notifications:send': ['SUPER_ADMIN', 'OPS'],
+  'notifications:broadcast-all': ['SUPER_ADMIN'], // all users / all workers
 }
 
 // Maps URL path prefixes -> required permission, used by middleware.ts
@@ -73,6 +78,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/bookings', permission: 'bookings:view' },
   { prefix: '/payments', permission: 'payments:view' },
   { prefix: '/disputes', permission: 'disputes:view' },
+  { prefix: '/notifications', permission: 'notifications:view' },
   { prefix: '/analytics', permission: 'analytics:view' },
   { prefix: '/categories', permission: 'categories:view' },
   { prefix: '/settings', permission: 'settings:view' },

@@ -1,0 +1,5 @@
+{
+  "title": "Ab {{{city}}} mein live",
+  "body": "Ab hum {{{city}}} mein hain! Pehli booking par {{{discount}}}% off.",
+  "deep_link": "tasklync://home"
+}

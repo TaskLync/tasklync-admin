@@ -1,0 +1,5 @@
+{
+  "title": "Now live in {{{city}}}",
+  "body": "We're now in {{{city}}}! First booking {{{discount}}}% off.",
+  "deep_link": "tasklync://home"
+}

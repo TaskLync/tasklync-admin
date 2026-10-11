@@ -1,0 +1,5 @@
+{
+  "title": "Weekend offer",
+  "body": "Weekend offer: {{{discount}}}% off all {{{category}}} bookings.",
+  "deep_link": "tasklync://home"
+}

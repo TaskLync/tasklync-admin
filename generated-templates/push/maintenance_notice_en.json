@@ -1,0 +1,5 @@
+{
+  "title": "Scheduled maintenance",
+  "body": "Tasklync will be down for maintenance from {{{time}}} to {{{time2}}}.",
+  "deep_link": "tasklync://home"
+}

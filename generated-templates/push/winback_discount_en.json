@@ -1,0 +1,5 @@
+{
+  "title": "We miss you!",
+  "body": "We miss you! Here's {{{discount}}}% off your next booking.",
+  "deep_link": "tasklync://home"
+}

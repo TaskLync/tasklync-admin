@@ -10,6 +10,8 @@ interface KpiCardProps {
   label: string
   value: string
   changePct?: number | null
+  /** Text printed right after the number. Default keeps the existing dashboard wording. */
+  changeLabel?: string
   sparkline?: number[]
   color?: string
 }
@@ -18,6 +20,7 @@ export function KpiCard({
   label,
   value,
   changePct = null,
+  changeLabel = '% vs yesterday',
   sparkline = [],
   color,
 }: KpiCardProps) {
@@ -78,7 +81,7 @@ export function KpiCard({
             ) : (
               <ArrowDownRight size={14} />
             )}
-            {Math.abs(changePct).toFixed(1)}% vs yesterday
+            {Math.abs(changePct).toFixed(1)}{changeLabel}
           </div>
         )}
       </div>
