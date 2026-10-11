@@ -67,6 +67,9 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'notifications:view': ['SUPER_ADMIN', 'OPS'],
   'notifications:send': ['SUPER_ADMIN', 'OPS'],
   'notifications:broadcast-all': ['SUPER_ADMIN'], // all users / all workers
+
+    // Live map
+  'map:view': ['SUPER_ADMIN', 'OPS'],
 }
 
 // Maps URL path prefixes -> required permission, used by middleware.ts
@@ -82,6 +85,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/analytics', permission: 'analytics:view' },
   { prefix: '/categories', permission: 'categories:view' },
   { prefix: '/settings', permission: 'settings:view' },
+  { prefix: '/map', permission: 'map:view' },
 ]
 
 export function hasPermission(role: AdminRole, permission: string): boolean {
