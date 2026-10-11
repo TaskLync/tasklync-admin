@@ -9,17 +9,49 @@ let cachedApp: App | null = null
 let cachedMessaging: Messaging | null = null
 
 function loadServiceAccount(): Record<string, unknown> {
-  const base64 = process.env.FCM_SERVICE_ACCOUNT_JSON_BASE64
-  if (base64) {
+  const rawCandidate =
+    process.env.FCM_SERVICE_ACCOUNT_JSON_BASE64 ||
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 ||
+    process.env.FIREBASE_SERVICE_ACCOUNT ||
+    process.env.FCM_SERVICE_ACCOUNT_JSON
+
+  if (rawCandidate) {
+    const cleaned = rawCandidate.trim().replace(/^["']|["']$/g, '')
+    // Check if raw JSON string was provided
+    if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+      try {
+        return JSON.parse(cleaned)
+      } catch (err: unknown) {
+        console.warn('[firebase-admin] Failed to parse raw JSON from environment variable:', err)
+      }
+    }
+
+    // Try base64 decoding
     try {
-      const decoded = Buffer.from(base64, 'base64').toString('utf8')
-      return JSON.parse(decoded)
+      const decoded = Buffer.from(cleaned, 'base64').toString('utf8')
+      if (decoded.trim().startsWith('{')) {
+        return JSON.parse(decoded)
+      }
     } catch (err: unknown) {
-      console.warn('[firebase-admin] Failed to parse FCM_SERVICE_ACCOUNT_JSON_BASE64, falling back to file:', err)
+      console.warn('[firebase-admin] Failed to decode base64 from environment variable:', err)
     }
   }
 
-  // Fallback to local service-account.json if present
+  // Check individual environment variables (common on Vercel)
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY || process.env.FCM_PRIVATE_KEY
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL || process.env.FCM_CLIENT_EMAIL
+  const projectId = process.env.FCM_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'tasklync-6e7ae'
+
+  if (privateKey && clientEmail) {
+    return {
+      type: 'service_account',
+      project_id: projectId,
+      private_key: privateKey.replace(/\\n/g, '\n'),
+      client_email: clientEmail,
+    }
+  }
+
+  // Fallback to local service-account.json if present (local dev only)
   const candidateFiles = [
     path.resolve(process.cwd(), 'service-account.json'),
     path.resolve(process.cwd(), 'firebase-service-account.json'),
@@ -37,7 +69,7 @@ function loadServiceAccount(): Record<string, unknown> {
   }
 
   throw new Error(
-    'Firebase service account credentials not found. Provide FCM_SERVICE_ACCOUNT_JSON_BASE64 in .env or place service-account.json in the project root.'
+    'Firebase service account credentials missing. Please configure FCM_SERVICE_ACCOUNT_JSON_BASE64 in your Vercel Project Settings -> Environment Variables.'
   )
 }
 
@@ -89,7 +121,18 @@ export interface DirectPushResult {
  * Supports iOS APNs background/foreground badges & Android channels.
  */
 export async function sendDirectPush(payload: DirectPushPayload): Promise<DirectPushResult> {
-  const messaging = getFirebaseMessaging()
+  let messaging: Messaging
+  try {
+    messaging = getFirebaseMessaging()
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[firebase-admin] Cannot send push — Firebase initialization error:', msg)
+    return {
+      success: false,
+      error: `Firebase Admin unconfigured: ${msg}`,
+      isDeadToken: false,
+    }
+  }
 
   const dataPayload: Record<string, string> = {
     title: payload.title,

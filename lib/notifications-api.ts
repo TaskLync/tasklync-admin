@@ -56,8 +56,9 @@ export function notificationsErrorResponse(err: unknown, tag: string) {
       { status: 503 }
     )
   }
+  const message = err instanceof Error ? err.message : String(err || 'Request failed')
   console.error(tag, err)
-  return NextResponse.json({ error: 'Request failed' }, { status: 500 })
+  return NextResponse.json({ error: message }, { status: 500 })
 }
 
 // ---------- Parsing + validation (never trust the browser) ----------
