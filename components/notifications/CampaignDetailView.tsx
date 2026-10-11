@@ -187,8 +187,14 @@ export default function CampaignDetailView({ campaignId }: { campaignId: string 
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Message</h2>
             {message ? (
               <>
-                <p className="mb-2 text-xs text-gray-500">{message.label}</p>
-                <PhonePreview title={message.title} body={message.body} sms={campaign.channels.includes('sms')} />
+                <PhonePreview
+                  title={message.title}
+                  body={message.body}
+                  sms={campaign.channels.includes('sms')}
+                  imageUrl={(campaign.templateData?.imageUrl || campaign.templateData?.image) as string | undefined}
+                  deepLink={campaign.templateData?.deepLink as string | undefined}
+                  templateKey={campaign.templateKey}
+                />
               </>
             ) : (
               <p className="text-sm text-gray-500">

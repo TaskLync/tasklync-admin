@@ -139,7 +139,12 @@ export function parseMessage(
     if (!DEEP_LINK_RE.test(deepLink)) {
       throw new NotificationActionError(400, 'Deep link must look like tasklync://home')
     }
-    return { templateKey: CUSTOM_TEMPLATE_KEY, templateData: { title, body, deepLink }, category: null }
+    const imageUrl = m.imageUrl && typeof m.imageUrl === 'string' && m.imageUrl.trim() ? m.imageUrl.trim() : undefined
+    return {
+      templateKey: CUSTOM_TEMPLATE_KEY,
+      templateData: { title, body, deepLink, ...(imageUrl ? { imageUrl, image: imageUrl } : {}) },
+      category: null,
+    }
   }
 
   throw new NotificationActionError(400, 'Write a message first')
@@ -298,7 +303,7 @@ export async function resolveRecipients(
   })
 
   const { rows } = await db.query(
-    `SELECT t.id, t.name, t.phone, t.email
+    `SELECT t.id, t.name, t.phone, t.email, t.fcm_token
      FROM ${table} t
      WHERE t.deleted_at IS NULL
        AND (
@@ -323,7 +328,13 @@ export async function resolveRecipients(
   }
 
   return {
-    matched: rows.map((r) => ({ id: r.id, name: r.name, phone: r.phone, email: r.email })),
+    matched: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      phone: r.phone,
+      email: r.email,
+      hasFcmToken: Boolean(r.fcm_token),
+    })),
     notFound,
   }
 }

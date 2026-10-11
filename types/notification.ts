@@ -16,8 +16,8 @@ export type AudienceSelection =
   | { segmentType: 'custom_ids'; audience: 'users' | 'workers'; ids: string[] }
 
 export type MessageDraft =
-  | { mode: 'template'; templateId: string; language: TemplateLanguage; values: Record<string, string> }
-  | { mode: 'custom'; title: string; body: string; deepLink: string }
+  | { mode: 'template'; templateId: string; language: TemplateLanguage; values: Record<string, string>; imageUrl?: string }
+  | { mode: 'custom'; title: string; body: string; deepLink: string; imageUrl?: string }
 
 export interface LaunchRequest {
   /** Internal label, never shown to recipients. */
@@ -45,7 +45,7 @@ export interface AudienceEstimate {
 }
 
 export interface ResolveResult {
-  matched: { id: string; name: string | null; phone: string | null; email: string | null }[]
+  matched: { id: string; name: string | null; phone: string | null; email: string | null; hasFcmToken?: boolean }[]
   notFound: string[]
 }
 

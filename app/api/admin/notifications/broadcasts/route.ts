@@ -4,7 +4,7 @@ import { requirePermission } from '@/lib/rbac-guard'
 import { hasPermission } from '@/lib/auth/rbac'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { BROAD_SEGMENTS, LIMITS } from '@/lib/notification-constants'
-import { launchBroadcast } from '@/lib/notification-service'
+import { launchDirectBroadcast } from '@/lib/direct-broadcast-engine'
 import {
   NotificationActionError,
   assertNoRecentDuplicate,
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     await assertNoRecentDuplicate(message.templateKey)
 
-    const result = await launchBroadcast({
+    const result = await launchDirectBroadcast({
       title: label,
       template_key: message.templateKey,
       template_data: message.templateData,

@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Send } from 'lucide-react'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -17,8 +17,10 @@ import {
   defaultValues,
   getTemplate,
   previewTemplate,
+  templateKey,
   type TemplateLanguage,
 } from '@/lib/notification-catalog'
+import SendTestModal from './SendTestModal'
 import {
   BROAD_SEGMENTS,
   DEEP_LINK_RE,
@@ -111,6 +113,7 @@ export default function ComposeTab({ seed }: { seed: ComposeSeed | null }) {
   const [customCategory, setCustomCategory] = useState<BroadcastCategory>('marketing')
   const [channels, setChannels] = useState<DeliveryChannel[]>(['push'])
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [testModalOpen, setTestModalOpen] = useState(false)
   const [ackQuiet, setAckQuiet] = useState(false)
 
   const template = draft.mode === 'template' ? getTemplate(draft.templateId) : undefined
@@ -212,7 +215,18 @@ export default function ComposeTab({ seed }: { seed: ComposeSeed | null }) {
       <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:self-start">
         <Card className="p-4">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Preview</h2>
-          <PhonePreview title={preview.title} body={preview.body} sms={channels.includes('sms')} />
+          <PhonePreview
+            title={preview.title}
+            body={preview.body}
+            sms={channels.includes('sms')}
+            imageUrl={draft.imageUrl}
+            deepLink={draft.mode === 'custom' ? draft.deepLink : template?.deepLink}
+            templateKey={
+              template && draft.mode === 'template'
+                ? templateKey(template.id, draft.language)
+                : 'admin_custom_message'
+            }
+          />
         </Card>
 
         <Card className="flex flex-col gap-3 p-4">
@@ -293,15 +307,26 @@ export default function ComposeTab({ seed }: { seed: ComposeSeed | null }) {
           </ul>
         )}
 
-        <Button
-          disabled={!canSend}
-          onClick={() => {
-            setAckQuiet(false)
-            setConfirmOpen(true)
-          }}
-        >
-          Review &amp; send
-        </Button>
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="secondary"
+            disabled={!preview.title.trim()}
+            onClick={() => setTestModalOpen(true)}
+            className="w-full"
+          >
+            <Send size={13} className="mr-1.5" /> Send test to my device
+          </Button>
+          <Button
+            disabled={!canSend}
+            onClick={() => {
+              setAckQuiet(false)
+              setConfirmOpen(true)
+            }}
+            className="w-full"
+          >
+            Review &amp; send
+          </Button>
+        </div>
       </div>
 
       {/* ---------- Confirm ---------- */}
@@ -350,6 +375,16 @@ export default function ComposeTab({ seed }: { seed: ComposeSeed | null }) {
           )}
         </div>
       </ConfirmDialog>
+
+      {/* ---------- Send Test Push Modal ---------- */}
+      <SendTestModal
+        open={testModalOpen}
+        onClose={() => setTestModalOpen(false)}
+        draft={draft}
+        channels={channels}
+        previewTitle={preview.title}
+        previewBody={preview.body}
+      />
     </div>
   )
 }

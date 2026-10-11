@@ -1,6 +1,8 @@
 // components/notifications/MessageEditor.tsx
 'use client'
 
+import { useState } from 'react'
+import { Image as ImageIcon, Link as LinkIcon, X } from 'lucide-react'
 import { Input } from '@/components/ui/Input'
 import { cn } from '@/lib/cn'
 import {
@@ -32,6 +34,16 @@ const TEXTAREA =
   'h-24 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1F6F5F]'
 const KIND_ORDER: TemplateKind[] = ['operational', 'promo', 'greeting', 'seasonal']
 
+const DEEP_LINK_PRESETS = [
+  { label: 'Home Screen', value: 'tasklync://home' },
+  { label: 'Service Catalog', value: 'tasklync://services' },
+  { label: 'Wallet & Credits', value: 'tasklync://wallet' },
+  { label: 'Promo Discounts', value: 'tasklync://promos' },
+  { label: 'Worker: Available Jobs', value: 'tasklync://worker/jobs' },
+  { label: 'Worker: Earnings', value: 'tasklync://worker/earnings' },
+  { label: 'Custom link...', value: '' },
+]
+
 interface Props {
   draft: MessageDraft
   onChange: (draft: MessageDraft) => void
@@ -53,7 +65,7 @@ export default function MessageEditor({
   function switchMode(mode: 'template' | 'custom') {
     if (mode === draft.mode) return
     if (mode === 'custom') {
-      onChange({ mode: 'custom', title: '', body: '', deepLink: '' })
+      onChange({ mode: 'custom', title: '', body: '', deepLink: 'tasklync://home', imageUrl: '' })
     } else {
       const t = CATALOG[0]
       onChange({ mode: 'template', templateId: t.id, language: 'en', values: defaultValues(t) })
@@ -70,6 +82,9 @@ export default function MessageEditor({
       values: defaultValues(t),
     })
   }
+
+  const currentDeepLink = draft.mode === 'custom' ? draft.deepLink : ''
+  const isPresetDeepLink = DEEP_LINK_PRESETS.some((p) => p.value === currentDeepLink && p.value !== '')
 
   return (
     <div className="flex flex-col gap-4">
@@ -159,36 +174,91 @@ export default function MessageEditor({
             </div>
             <Input
               value={draft.title}
-              placeholder="Short and clear"
+              placeholder="e.g. Flash Sale: 20% Off All AC Services Today"
               onChange={(e) => onChange({ ...draft, title: e.target.value })}
             />
           </div>
+
           <div>
             <div className="mb-1 flex items-center justify-between">
-              <label className="text-xs font-medium text-gray-700">Message</label>
+              <label className="text-xs font-medium text-gray-700">Message Copy</label>
               <Counter value={draft.body.length} max={bodyMax} />
             </div>
             <textarea
               className={TEXTAREA}
               value={draft.body}
-              placeholder="What do you want people to know?"
+              placeholder="Keep it compelling, concise, and actionable..."
               onChange={(e) => onChange({ ...draft, body: e.target.value })}
             />
             <p className="mt-1 text-xs text-gray-400">
               Plain text only. Double quotes and backslashes are not allowed. Use a single quote (&apos;).
-              Same message for everyone, so no names.
             </p>
           </div>
-          <Input
-            label="Opens in the app (optional)"
-            placeholder="tasklync://home"
-            value={draft.deepLink}
-            onChange={(e) => onChange({ ...draft, deepLink: e.target.value })}
-            helperText="Leave empty for the home screen."
-          />
+
+          {/* FCM Rich Push Media Attachment (Image URL) */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-gray-700">
+                <ImageIcon size={13} className="text-[#1F6F5F]" />
+                <span>Rich Push Image URL (FCM BigPictureStyle / iOS Banner)</span>
+              </label>
+              {draft.imageUrl && (
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...draft, imageUrl: '' })}
+                  className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600"
+                >
+                  <X size={11} /> Clear image
+                </button>
+              )}
+            </div>
+            <Input
+              value={draft.imageUrl ?? ''}
+              placeholder="https://res.cloudinary.com/... or https://.../promo.jpg"
+              onChange={(e) => onChange({ ...draft, imageUrl: e.target.value })}
+              helperText="Optional 2:1 aspect ratio banner. Renders in Firebase FCM expanded notifications."
+            />
+          </div>
+
+          {/* Deep link with Quick Preset selector */}
+          <div className="flex flex-col gap-1.5">
+            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-700">
+              <LinkIcon size={13} className="text-gray-500" />
+              <span>Target Deep Link (Where in app does tap navigate?)</span>
+            </label>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <select
+                className={cn(SELECT_CLASS, 'w-full text-xs')}
+                value={isPresetDeepLink ? currentDeepLink : ''}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onChange({ ...draft, deepLink: e.target.value })
+                  }
+                }}
+              >
+                <option value="" disabled={isPresetDeepLink}>
+                  Select a common route...
+                </option>
+                {DEEP_LINK_PRESETS.map((p) => (
+                  <option key={p.label} value={p.value}>
+                    {p.label} {p.value ? `(${p.value})` : ''}
+                  </option>
+                ))}
+              </select>
+
+              <Input
+                placeholder="tasklync://home"
+                value={draft.deepLink}
+                onChange={(e) => onChange({ ...draft, deepLink: e.target.value })}
+                className="text-xs font-mono"
+              />
+            </div>
+          </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-700">What kind of message is this?</label>
+            <label className="mb-1 block text-xs font-medium text-gray-700">
+              What kind of message is this?
+            </label>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {BROADCAST_CATEGORIES.map((c) => (
                 <label
