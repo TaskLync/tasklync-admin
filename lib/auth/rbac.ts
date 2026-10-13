@@ -70,6 +70,11 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
 
     // Live map
   'map:view': ['SUPER_ADMIN', 'OPS'],
+
+    // Reviews & ratings
+  'reviews:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'reviews:moderate': ['SUPER_ADMIN', 'OPS'], // hide / restore / dismiss reports
+  'reviews:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // internal notes
 }
 
 // Maps URL path prefixes -> required permission, used by middleware.ts
@@ -86,6 +91,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/categories', permission: 'categories:view' },
   { prefix: '/settings', permission: 'settings:view' },
   { prefix: '/map', permission: 'map:view' },
+  { prefix: '/reviews', permission: 'reviews:view' },
 ]
 
 export function hasPermission(role: AdminRole, permission: string): boolean {

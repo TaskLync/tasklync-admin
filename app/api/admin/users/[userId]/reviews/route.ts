@@ -14,7 +14,8 @@ export async function GET(
 
   try {
     const { rows } = await db.query(
-      `SELECT r.id, r.rating, r.comment, r.is_flagged, r.created_at,
+      `SELECT r.id, r.rating, r.comment, r.report_count,
+              r.moderation_status::text AS moderation_status, r.created_at,
               w.name AS worker_name
        FROM reviews r
        LEFT JOIN workers w ON w.id = r.worker_id
@@ -30,12 +31,13 @@ export async function GET(
         workerName: r.worker_name,
         rating: r.rating,
         comment: r.comment,
-        isFlagged: r.is_flagged,
+        isFlagged: r.report_count > 0,
+        moderationStatus: r.moderation_status,
         createdAt: r.created_at,
       })),
     })
   } catch (err: any) {
-    if (err?.code === '42P01') {
+    if (err?.code === '42P01' || err?.code === '42703') {
       return NextResponse.json({ available: false, data: [] })
     }
     console.error('[GET user reviews]', err)
