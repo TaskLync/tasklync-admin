@@ -38,15 +38,20 @@ async function callRefresh(force: boolean): Promise<boolean> {
 
 export function refreshSession(force = false): Promise<boolean> {
   if (inFlight) return inFlight
-  const run = () => callRefresh(force)
+  const run = (): Promise<boolean> => callRefresh(force)
   // Web Locks serialise refreshes across tabs; fall back gracefully where unsupported.
-  const p = typeof navigator !== 'undefined' && 'locks' in navigator
-    ? navigator.locks.request('admin-auth-refresh', run)
-    : run()
-  inFlight = p.catch(() => false).finally(() => {
+  // The async wrapper + await flattens the lock's nested promise type to a plain boolean.
+  const p: Promise<boolean> = (async (): Promise<boolean> => {
+    if (typeof navigator !== 'undefined' && 'locks' in navigator) {
+      return await navigator.locks.request('admin-auth-refresh', run)
+    }
+    return run()
+  })()
+  const tracked: Promise<boolean> = p.catch(() => false).finally(() => {
     inFlight = null
   })
-  return inFlight
+  inFlight = tracked
+  return tracked
 }
 
 export function getLastRefreshAt() {
