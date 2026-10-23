@@ -1,38 +1,26 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useCallback } from 'react'
+import useSWR from 'swr'
+import { fetcher } from '@/lib/swr-fetcher'
 import type { AdminUser } from '@/types/auth'
 
+type SessionAdmin = AdminUser & { mfaSetupRequired?: boolean }
+
+// One shared request for Header + Sidebar + usePermission (SWR dedupes it).
+// Token refresh is handled globally by lib/auth-fetch.ts (installed in SessionKeeper).
 export function useAdminSession() {
-  const router = useRouter()
-  const [admin, setAdmin] = useState<AdminUser | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data, isLoading } = useSWR<SessionAdmin>('/api/admin/auth/session', fetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+    dedupingInterval: 60_000,
+  })
 
-  const fetchWithAuth = useCallback(async (input: RequestInfo, init: RequestInit = {}) => {
-    let token = sessionStorage.getItem('admin_access_token')
-    let res = await fetch(input, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } })
+  // Kept for backwards compatibility with any caller that still uses it.
+  const fetchWithAuth = useCallback(
+    (input: RequestInfo | URL, init: RequestInit = {}) => fetch(input, { ...init, credentials: 'same-origin' }),
+    []
+  )
 
-    if (res.status === 401) {
-      const refreshRes = await fetch('/api/admin/auth/refresh', { method: 'POST' })
-      if (!refreshRes.ok) {
-        router.push('/auth/login')
-        throw new Error('Session expired')
-      }
-      const { accessToken } = await refreshRes.json()
-      sessionStorage.setItem('admin_access_token', accessToken)
-      res = await fetch(input, { ...init, headers: { ...init.headers, Authorization: `Bearer ${accessToken}` } })
-    }
-    return res
-  }, [router])
-
-  useEffect(() => {
-    fetchWithAuth('/api/admin/auth/session')
-      .then((r) => r.json())
-      .then(setAdmin)
-      .catch(() => setAdmin(null))
-      .finally(() => setLoading(false))
-  }, [fetchWithAuth])
-
-  return { admin, loading, fetchWithAuth }
+  return { admin: data ?? null, loading: isLoading, fetchWithAuth }
 }

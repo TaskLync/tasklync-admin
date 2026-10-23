@@ -29,19 +29,32 @@ export async function logAdminAction(params: AuditParams) {
       params.newValue ? JSON.stringify(params.newValue) : null,
       params.notes ?? null,
       params.ip,
-      params.userAgent ?? null,
+      params.userAgent?.slice(0, 500) ?? null,
     ]
   )
 }
 
-// Extracts client IP from standard proxy headers.
-// Works on Vercel and any reverse proxy (nginx, Cloudflare) forwarding x-forwarded-for.
-export function getClientIp(request: Request): string {
-  const forwardedFor = request.headers.get('x-forwarded-for')
-  if (forwardedFor) {
-    return forwardedFor.split(',')[0].trim()
+/** For login/MFA/session events: an audit-table hiccup must never lock admins out. */
+export async function logAuthEvent(params: AuditParams) {
+  try {
+    await logAdminAction(params)
+  } catch (err) {
+    console.error('[audit] failed to write auth event', params.action, err)
   }
-  const realIp = request.headers.get('x-real-ip')
-  if (realIp) return realIp
-  return 'unknown'
+}
+
+// Client IP. x-real-ip first, then the FIRST x-forwarded-for hop. Truncated to fit VARCHAR(50).
+// This is only trustworthy behind a proxy that overwrites these headers (Vercel, nginx with
+// `proxy_set_header X-Real-IP $remote_addr`, Cloudflare). Per-account lockout does not depend on it.
+export function getClientIp(request: Request): string {
+  const raw =
+    request.headers.get('x-real-ip') ??
+    request.headers.get('x-forwarded-for')?.split(',')[0] ??
+    ''
+  const ip = raw.trim().slice(0, 45)
+  return ip || 'unknown'
+}
+
+export function getUserAgent(request: Request): string | null {
+  return request.headers.get('user-agent')?.slice(0, 500) ?? null
 }

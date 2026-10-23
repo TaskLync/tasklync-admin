@@ -1,0 +1,2119 @@
+﻿
+==================================================
+FILE: middleware.ts
+==================================================
+
+import { NextRequest, NextResponse } from 'next/server'
+import { jwtVerify } from 'jose'
+import { permissionForPath, hasPermission } from '@/lib/auth/rbac'
+import type { AdminRole } from '@/types/auth'
+
+const secret = new TextEncoder().encode(process.env.ADMIN_JWT_SECRET!)
+
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  const isAuthRoute = pathname.startsWith('/auth')
+  const isAuthApi = pathname.startsWith('/api/admin/auth')
+
+  if (isAuthRoute || isAuthApi) return NextResponse.next()
+
+  const accessToken = request.headers.get('authorization')?.replace('Bearer ', '')
+    ?? request.cookies.get('admin_access')?.value
+
+  if (!accessToken) {
+    return NextResponse.redirect(new URL('/auth/login', request.url))
+  }
+
+  try {
+    const { payload } = await jwtVerify(accessToken, secret)
+    const role = payload.role as AdminRole
+
+    const requiredPermission = permissionForPath(pathname)
+    if (requiredPermission && !hasPermission(role, requiredPermission)) {
+      return NextResponse.redirect(new URL('/', request.url)) // bounce to dashboard, not an error page
+    }
+
+    return NextResponse.next()
+  } catch {
+    // Invalid, tampered, or expired token â€” never let the request through.
+    // Client-side useAdminSession handles silent refresh for API calls;
+    // a plain page navigation with a dead token must go straight to login.
+    return NextResponse.redirect(new URL('/auth/login', request.url))
+  }
+}
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+}
+
+==================================================
+FILE: next.config.ts
+==================================================
+
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "res.cloudinary.com",
+        pathname: "/df47l0i1v/**",
+      },
+      {
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+      },
+    ],
+  },
+};
+
+export default nextConfig;
+
+==================================================
+FILE: package.json
+==================================================
+
+{
+  "name": "tasklync-admin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "setup:firebase": "tsx scripts/setup-firebase.ts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-table": "^8.21.3",
+    "axios": "^1.18.1",
+    "bcryptjs": "^3.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "dotenv": "^17.4.2",
+    "firebase-admin": "^14.5.0",
+    "ioredis": "^5.11.1",
+    "jose": "^6.2.3",
+    "lucide-react": "^1.23.0",
+    "mapbox-gl": "^3.32.0",
+    "next": "16.2.10",
+    "otplib": "^12.0.1",
+    "pg": "^8.22.0",
+    "qrcode": "^1.5.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-hook-form": "^7.81.0",
+    "recharts": "^3.9.2",
+    "sonner": "^2.0.7",
+    "swr": "^2.4.2",
+    "tailwind-merge": "^3.6.0",
+    "ua-parser-js": "^2.0.10",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/geojson": "^7946.0.16",
+    "@types/node": "^20",
+    "@types/pg": "^8.20.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "supertest": "^7.2.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.0",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  }
+}
+
+
+==================================================
+FILE: tsconfig.json
+==================================================
+
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+
+
+==================================================
+FILE: .env.example
+==================================================
+
+DATABASE_URL=postgresql://user:password@localhost:5432/tasklync_admin
+REDIS_URL=redis://localhost:6379
+
+# 32+ byte random secret â€” generate with: openssl rand -base64 48
+ADMIN_JWT_SECRET=
+
+ADMIN_ACCESS_TOKEN_TTL=900          # 15 minutes, in seconds
+ADMIN_REFRESH_TOKEN_TTL=28800       # 8 hours, in seconds
+ADMIN_MFA_TEMP_TOKEN_TTL=900        # 15 minutes, in seconds
+
+ADMIN_MAX_FAILED_ATTEMPTS=5
+ADMIN_LOCKOUT_MINUTES=30
+ADMIN_MAX_CONCURRENT_SESSIONS=2
+
+NEXT_PUBLIC_ADMIN_URL=https://admin.tasklync.pk
+
+
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # server-only, never expose to client
+
+==================================================
+FILE: app\layout.tsx
+==================================================
+
+import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import "./globals.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans-loader",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono-loader",
+  display: "swap",
+});
+
+export const metadata: Metadata = {
+  title: "TaskLync Admin",
+  description: "TaskLync Admin Panel",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`${inter.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="bg-bg-page text-text-primary antialiased">
+        {children}
+      </body>
+    </html>
+  );
+}
+
+==================================================
+FILE: app\(admin)\layout.tsx
+==================================================
+
+// app/(admin)/layout.tsx
+import { Sidebar } from '@/components/layout/Sidebar'
+import { Header } from '@/components/layout/Header'
+
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-screen overflow-hidden bg-[#F7F8FA]">
+      <Sidebar />
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <Header />
+        <main className="flex-1 overflow-y-auto">{children}</main>
+      </div>
+    </div>
+  )
+}
+
+==================================================
+FILE: app\(admin)\page.tsx
+==================================================
+
+// app/(admin)/page.tsx
+import { KpiGrid } from '@/components/dashboard/KpiGrid'
+import { AttentionPanel } from '@/components/dashboard/AttentionPanel'
+import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
+import { RevenueChart } from '@/components/dashboard/RevenueChart'
+import { BookingFunnel } from '@/components/dashboard/BookingFunnel'
+
+export const metadata = {
+  title: 'Dashboard | TaskLync Admin',
+}
+
+export default function DashboardPage() {
+  return (
+    <div className="flex flex-col gap-4 px-6 py-5">
+      <h1 className="text-lg font-semibold text-gray-900">Dashboard</h1>
+
+      {/* 1.1 KPI Cards */}
+      <KpiGrid />
+
+      {/* 1.2 Needs Attention + 1.3 Live Activity, side by side on desktop */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <AttentionPanel />
+        <ActivityFeed />
+      </div>
+
+      {/* 1.4 Revenue Chart */}
+      <RevenueChart />
+
+      {/* 1.5 Booking Status Funnel */}
+      <BookingFunnel />
+    </div>
+  )
+}
+
+==================================================
+FILE: app\auth\layout.tsx
+==================================================
+
+export default function AuthLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[--bg-page]">
+      <div className="w-full max-w-sm bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+==================================================
+FILE: app\auth\login\page.tsx
+==================================================
+
+import { LoginForm } from '@/components/auth/LoginForm'
+
+export default function LoginPage() {
+  return <LoginForm />
+}
+
+==================================================
+FILE: app\auth\mfa\page.tsx
+==================================================
+
+import { MfaForm } from '@/components/auth/MfaForm'
+
+export default function MfaPage() {
+  return <MfaForm />
+}
+
+==================================================
+FILE: app\auth\mfa-setup\page.tsx
+==================================================
+
+import { MfaSetupForm } from '@/components/auth/MfaSetupForm'
+
+export default function MfaSetupPage() {
+  return <MfaSetupForm />
+}
+
+==================================================
+FILE: components\auth\LoginForm.tsx
+==================================================
+
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+export function LoginForm() {
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    try {
+      const res = await fetch('/api/admin/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+
+      let data: any = null
+      try {
+        data = await res.json()
+      } catch {
+        throw new Error('Server error. Please try again in a moment.')
+      }
+
+      if (!res.ok) {
+        setError(data?.error ?? 'Something went wrong')
+        return
+      }
+      if (data.requiresMFA) {
+        sessionStorage.setItem('mfa_temp_token', data.tempToken)
+        router.push('/auth/mfa')
+        return
+      }
+      sessionStorage.setItem('admin_access_token', data.accessToken)
+      router.push(data.mfaSetupRequired ? '/auth/mfa-setup' : '/')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm">
+      <h1 className="text-lg font-semibold text-text-primary">Admin Sign In</h1>
+
+      <div>
+        <label htmlFor="email" className="text-xs font-medium text-gray-700 block mb-1">
+          Email
+        </label>
+        <input
+          id="email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          autoComplete="email"
+          disabled={loading}
+          className="h-9 w-full px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
+        />
+      </div>
+
+      <div>
+        <label htmlFor="password" className="text-xs font-medium text-gray-700 block mb-1">
+          Password
+        </label>
+        <input
+          id="password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          autoComplete="current-password"
+          disabled={loading}
+          className="h-9 w-full px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
+        />
+      </div>
+
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={loading}
+        className="cursor-pointer h-9 w-full text-sm font-medium rounded-md bg-accent text-white transition-colors duration-150 hover:bg-accent-hover disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {loading && (
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+          />
+        )}
+        {loading ? 'Signing inâ€¦' : 'Sign in'}
+      </button>
+    </form>
+  )
+}
+
+==================================================
+FILE: components\auth\MfaForm.tsx
+==================================================
+
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+
+export function MfaForm() {
+  const router = useRouter()
+  const [code, setCode] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    try {
+      const tempToken = sessionStorage.getItem('mfa_temp_token')
+      if (!tempToken) {
+        setError('Your session expired. Please sign in again.')
+        router.push('/auth/login')
+        return
+      }
+
+      const res = await fetch('/api/admin/auth/mfa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tempToken, code }),
+      })
+
+      let data: any = null
+      try {
+        data = await res.json()
+      } catch {
+        throw new Error('Server error. Please try again in a moment.')
+      }
+
+      if (!res.ok) {
+        setError(data?.error ?? 'Invalid code')
+        return
+      }
+      sessionStorage.removeItem('mfa_temp_token')
+      sessionStorage.setItem('admin_access_token', data.accessToken)
+      router.push('/')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm">
+      <h1 className="text-lg font-semibold text-text-primary">Two Factor Verification</h1>
+      <p className="text-xs text-text-secondary">
+        Enter the 6 digit code from your authenticator app, or a backup code.
+      </p>
+
+      <div>
+        <label htmlFor="code" className="text-xs font-medium text-gray-700 block mb-1">
+          Code
+        </label>
+        <input
+          id="code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          maxLength={11}
+          required
+          autoFocus
+          autoComplete="one-time-code"
+          disabled={loading}
+          className="h-9 w-full px-3 text-sm border border-gray-300 rounded-md font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
+        />
+      </div>
+
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={loading}
+        className="cursor-pointer h-9 w-full text-sm font-medium rounded-md bg-accent text-white transition-colors duration-150 hover:bg-accent-hover disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {loading && (
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+          />
+        )}
+        {loading ? 'Verifyingâ€¦' : 'Verify'}
+      </button>
+    </form>
+  )
+}
+
+==================================================
+FILE: components\auth\MfaSetupForm.tsx
+==================================================
+
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Copy, Check } from 'lucide-react'
+
+export function MfaSetupForm() {
+  const router = useRouter()
+  const [step, setStep] = useState<'loading' | 'scan' | 'confirmed' | 'setup-error'>('loading')
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('')
+  const [secret, setSecret] = useState('')
+  const [code, setCode] = useState('')
+  const [backupCodes, setBackupCodes] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSetup() {
+      try {
+        const token = sessionStorage.getItem('admin_access_token')
+        if (!token) {
+          router.push('/auth/login')
+          return
+        }
+
+        const res = await fetch('/api/admin/auth/mfa/setup', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        let data: any = null
+        try {
+          data = await res.json()
+        } catch {
+          throw new Error('Server error. Please refresh and try again.')
+        }
+
+        if (!res.ok) {
+          throw new Error(data?.error ?? 'Could not start MFA setup.')
+        }
+
+        if (cancelled) return
+        setQrCodeDataUrl(data.qrCodeDataUrl)
+        setSecret(data.secret)
+        setStep('scan')
+      } catch (err) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Network error. Please try again.')
+        setStep('setup-error')
+      }
+    }
+
+    loadSetup()
+    return () => {
+      cancelled = true
+    }
+  }, [router])
+
+  async function handleConfirm(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setConfirming(true)
+    try {
+      const token = sessionStorage.getItem('admin_access_token')
+      const res = await fetch('/api/admin/auth/mfa/setup-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code }),
+      })
+
+      let data: any = null
+      try {
+        data = await res.json()
+      } catch {
+        throw new Error('Server error. Please try again.')
+      }
+
+      if (!res.ok) {
+        setError(data?.error ?? 'Incorrect code')
+        return
+      }
+      setBackupCodes(data.backupCodes)
+      setStep('confirmed')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error. Please try again.')
+    } finally {
+      setConfirming(false)
+    }
+  }
+
+  async function handleCopyBackupCodes() {
+    try {
+      await navigator.clipboard.writeText(backupCodes.join('\n'))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setError('Could not copy automatically. Please select and copy manually.')
+    }
+  }
+
+  if (step === 'loading') {
+    return (
+      <div className="space-y-2 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm text-center">
+        <span
+          aria-hidden="true"
+          className="inline-block h-4 w-4 rounded-full border-2 border-gray-300 border-t-accent animate-spin"
+        />
+        <p className="text-sm text-text-secondary">Setting up two factor authenticationâ€¦</p>
+      </div>
+    )
+  }
+
+  if (step === 'setup-error') {
+    return (
+      <div className="space-y-4 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm">
+        <h1 className="text-lg font-semibold text-text-primary">Couldn't Start Setup</h1>
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="h-9 w-full text-sm font-medium rounded-md bg-accent text-white transition-colors duration-150 hover:bg-accent-hover"
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+
+  if (step === 'confirmed') {
+    return (
+      <div className="space-y-4 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm">
+        <h1 className="text-lg font-semibold text-text-primary">Save Your Backup Codes</h1>
+        <p className="text-xs text-text-secondary">
+          Each code works once, if you lose access to your authenticator app. Store these somewhere safe they won't be shown again.
+        </p>
+        <div className="relative bg-gray-50 border border-gray-200 rounded-md p-3 pr-10 font-mono text-sm space-y-1">
+          {backupCodes.map((c) => (
+            <div key={c}>{c}</div>
+          ))}
+          <button
+            type="button"
+            onClick={handleCopyBackupCodes}
+            title={copied ? 'Copied!' : 'Copy all codes'}
+            className="absolute top-2 right-2 h-7 w-7 flex items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors duration-150"
+          >
+            {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
+          </button>
+        </div>
+
+        {copied && <p className="text-xs text-success cursor-pointer">Copied to clipboard.</p>}
+
+        <button
+          onClick={() => router.push('/')}
+          className="cursor-pointer h-9 w-full text-sm font-medium rounded-md bg-accent text-white transition-colors duration-150 hover:bg-accent-hover"
+        >
+          Saved these, Continue to Dashboard
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleConfirm} className="space-y-4 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm">
+      <h1 className="text-lg font-semibold text-text-primary">Set Up Two Factor Authentication</h1>
+      <p className="text-xs text-text-secondary">Scan this with Google Authenticator or a similar app.</p>
+
+      {qrCodeDataUrl && <img src={qrCodeDataUrl} alt="MFA QR code" className="mx-auto" width={180} height={180} />}
+
+      <p className="text-xs text-text-muted text-center">
+        Can't scan? Enter manually: <span className="font-mono">{secret}</span>
+      </p>
+
+      <div>
+        <label htmlFor="mfa-setup-code" className="text-xs font-medium text-gray-700 block mb-1">
+          Enter the 6 digit code to confirm
+        </label>
+        <input
+          id="mfa-setup-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          maxLength={6}
+          required
+          autoFocus
+          disabled={confirming}
+          className="h-9 w-full px-3 text-sm border border-gray-300 rounded-md font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60 disabled:cursor-not-allowed"
+        />
+      </div>
+
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+
+      <button
+        type="submit"
+        disabled={confirming}
+        className="h-9 w-full text-sm font-medium rounded-md bg-accent text-white transition-colors duration-150 hover:bg-accent-hover disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {confirming && (
+          <span
+            aria-hidden="true"
+            className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+          />
+        )}
+        {confirming ? 'Confirmingâ€¦' : 'Confirm & Enable'}
+      </button>
+    </form>
+  )
+}
+
+==================================================
+FILE: components\layout\Header.tsx
+==================================================
+
+// components/layout/Header.tsx
+'use client'
+
+import { Bell } from 'lucide-react'
+import { Breadcrumb } from './Breadcrumb'
+import { useAdminSession } from '@/hooks/useAdminSession'
+
+const ROLE_LABEL: Record<string, string> = {
+  SUPER_ADMIN: 'Super Admin',
+  OPS: 'Ops',
+  FINANCE: 'Finance',
+  SUPPORT: 'Support',
+}
+
+export function Header() {
+  const { admin } = useAdminSession()
+
+  const initials = admin?.fullName
+    ? admin.fullName
+        .split(' ')
+        .map((p: string) => p[0])
+        .slice(0, 2)
+        .join('')
+        .toUpperCase()
+    : '..'
+
+  return (
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
+      <Breadcrumb />
+      <div className="flex items-center gap-3">
+        <button
+          title="Notifications"
+          className="cursor-pointer flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors duration-150 hover:bg-gray-50"
+        >
+          <Bell size={16} />
+        </button>
+        <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-700">
+            {initials}
+          </span>
+          {admin && (
+            <span className="hidden text-left sm:block">
+              <span className="block text-sm font-medium text-gray-800">
+                {admin.fullName}
+              </span>
+              <span className="block text-xs text-gray-400">
+                {ROLE_LABEL[admin.role] ?? admin.role}
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+    </header>
+  )
+}
+
+==================================================
+FILE: components\layout\Sidebar.tsx
+==================================================
+
+// components/layout/Sidebar.tsx
+'use client'
+import Image from 'next/image'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { ChevronsLeft, ChevronsRight, LogOut } from 'lucide-react'
+import { NAV_ITEMS } from '@/lib/nav-config'
+import { useSidebarStore } from '@/lib/store/useSidebarStore'
+import { useAdminSession } from '@/hooks/useAdminSession'
+import { cn } from '@/lib/cn'
+
+export function Sidebar() {
+  const pathname = usePathname()
+  const { collapsed, toggle } = useSidebarStore()
+  const { admin, loading } = useAdminSession()
+
+  const visibleItems = NAV_ITEMS.filter((item) =>
+    admin ? item.allowedRoles.includes(admin.role) : false
+  )
+
+  // Highlight only the most specific nav item (so /workers/verification
+  // doesn't also light up "Workers").
+  const activeHref = NAV_ITEMS.map((i) => i.href)
+    .filter((h) => (h === '/' ? pathname === '/' : pathname === h || pathname.startsWith(h + '/')))
+    .sort((a, b) => b.length - a.length)[0]
+
+  async function handleLogout() {
+    await fetch('/api/admin/auth/logout', { method: 'POST' })
+    window.location.href = '/auth/login'
+  }
+
+  return (
+    <aside
+      className={cn(
+        'flex h-screen shrink-0 flex-col border-r border-gray-200 bg-white transition-[width] duration-150',
+        collapsed ? 'w-16' : 'w-60'
+      )}
+    >
+      {/* Brand */}
+      <div className="flex h-14 items-center gap-2 border-b border-gray-200 px-4">
+        <div className="relative h-7 w-7 shrink-0">
+          <Image
+            src="/favicon.ico"
+            alt="TaskLync"
+            fill
+            className="object-contain"
+            priority
+          />
+        </div>
+        {!collapsed && (
+          <span className="truncate text-sm font-semibold text-gray-900">
+            TaskLync Admin
+          </span>
+        )}
+      </div>
+
+      {/* Nav */}
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2">
+        {loading &&
+          Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-9 animate-pulse rounded-md bg-gray-100" />
+          ))}
+        {!loading &&
+          visibleItems.map((item) => {
+            const active = item.href === activeHref
+            const Icon = item.icon
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                title={collapsed ? item.label : undefined}
+                className={cn(
+                  'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors duration-150',
+                  active
+                    ? 'bg-[#1F6F5F]/10 font-medium text-[#1F6F5F]'
+                    : 'text-gray-600 hover:bg-gray-50'
+                )}
+              >
+                <Icon size={16} className="shrink-0" />
+                {!collapsed && <span className="truncate">{item.label}</span>}
+              </Link>
+            )
+          })}
+      </nav>
+
+      {/* Logout */}
+      <button
+        onClick={handleLogout}
+        title={collapsed ? 'Log out' : undefined}
+        className="cursor-pointer flex items-center gap-2.5 border-t border-gray-200 px-4 py-2.5 text-sm text-gray-600 transition-colors duration-150 hover:bg-red-50 hover:text-red-600"
+      >
+        <LogOut size={16} className="shrink-0" />
+        {!collapsed && <span>Log out</span>}
+      </button>
+
+      {/* Collapse toggle */}
+      <button
+        onClick={toggle}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        className="cursor-pointer flex h-11 items-center justify-center gap-2 border-t border-gray-200 text-gray-400 transition-colors duration-150 hover:bg-gray-50 hover:text-gray-600"
+      >
+        {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+        {!collapsed && <span className="text-xs">Collapse</span>}
+      </button>
+    </aside>
+  )
+}
+
+==================================================
+FILE: hooks\useAdminSession.ts
+==================================================
+
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import type { AdminUser } from '@/types/auth'
+
+export function useAdminSession() {
+  const router = useRouter()
+  const [admin, setAdmin] = useState<AdminUser | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const fetchWithAuth = useCallback(async (input: RequestInfo, init: RequestInit = {}) => {
+    let token = sessionStorage.getItem('admin_access_token')
+    let res = await fetch(input, { ...init, headers: { ...init.headers, Authorization: `Bearer ${token}` } })
+
+    if (res.status === 401) {
+      const refreshRes = await fetch('/api/admin/auth/refresh', { method: 'POST' })
+      if (!refreshRes.ok) {
+        router.push('/auth/login')
+        throw new Error('Session expired')
+      }
+      const { accessToken } = await refreshRes.json()
+      sessionStorage.setItem('admin_access_token', accessToken)
+      res = await fetch(input, { ...init, headers: { ...init.headers, Authorization: `Bearer ${accessToken}` } })
+    }
+    return res
+  }, [router])
+
+  useEffect(() => {
+    fetchWithAuth('/api/admin/auth/session')
+      .then((r) => r.json())
+      .then(setAdmin)
+      .catch(() => setAdmin(null))
+      .finally(() => setLoading(false))
+  }, [fetchWithAuth])
+
+  return { admin, loading, fetchWithAuth }
+}
+
+==================================================
+FILE: hooks\usePermission.ts
+==================================================
+
+'use client'
+
+import { useAdminSession } from './useAdminSession'
+import { hasPermission } from '@/lib/auth/rbac'
+
+export function usePermission(permission: string): boolean {
+  const { admin } = useAdminSession()
+  if (!admin) return false
+  return hasPermission(admin.role, permission)
+}
+
+==================================================
+FILE: lib\auth\cookies.ts
+==================================================
+
+import { NextResponse } from 'next/server'
+
+export function setAuthCookies(res: NextResponse, accessToken: string, refreshToken: string) {
+  res.cookies.set('admin_access', accessToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: Number(process.env.ADMIN_ACCESS_TOKEN_TTL ?? 900), // seconds, match access token TTL
+  })
+  res.cookies.set('admin_session', refreshToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'strict',
+    path: '/',
+    maxAge: Number(process.env.ADMIN_REFRESH_TOKEN_TTL ?? 28800), // seconds
+  })
+}
+
+==================================================
+FILE: lib\auth\jwt.ts
+==================================================
+
+import { SignJWT, jwtVerify } from 'jose'
+import type { AccessTokenPayload, MfaTempTokenPayload } from '@/types/auth'
+
+const secret = new TextEncoder().encode(process.env.ADMIN_JWT_SECRET!)
+
+export async function signAccessToken(payload: Omit<AccessTokenPayload, 'type'>) {
+  const ttl = Number(process.env.ADMIN_ACCESS_TOKEN_TTL ?? 900)
+  return new SignJWT({ ...payload, type: 'access' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + ttl)
+    .sign(secret)
+}
+
+export async function verifyAccessToken(token: string): Promise<AccessTokenPayload> {
+  const { payload } = await jwtVerify(token, secret)
+  if (payload.type !== 'access') throw new Error('Invalid token type')
+  return payload as unknown as AccessTokenPayload
+}
+
+export async function signMfaTempToken(adminId: string) {
+  const ttl = Number(process.env.ADMIN_MFA_TEMP_TOKEN_TTL ?? 900)
+  return new SignJWT({ sub: adminId, purpose: 'mfa_pending', type: 'mfa_temp' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + ttl)
+    .sign(secret)
+}
+
+export async function verifyMfaTempToken(token: string): Promise<MfaTempTokenPayload> {
+  const { payload } = await jwtVerify(token, secret)
+  if (payload.type !== 'mfa_temp') throw new Error('Invalid token type')
+  return payload as unknown as MfaTempTokenPayload
+}
+
+==================================================
+FILE: lib\auth\mfa.ts
+==================================================
+
+import { authenticator } from 'otplib'
+import QRCode from 'qrcode'
+import { hashPassword, verifyPassword } from './password'
+import crypto from 'crypto'
+
+export function generateMfaSecret() {
+  return authenticator.generateSecret()
+}
+
+export async function generateMfaQrCode(email: string, secret: string): Promise<string> {
+  const otpauth = authenticator.keyuri(email, 'Tasklync Admin', secret)
+  return QRCode.toDataURL(otpauth) // returns a data: URL, render directly in an <img>
+}
+
+export function verifyTotp(code: string, secret: string): boolean {
+  return authenticator.check(code, secret)
+}
+
+export function generateBackupCodes(count = 10): string[] {
+  return Array.from({ length: count }, () =>
+    crypto.randomBytes(5).toString('hex').toUpperCase().match(/.{1,5}/g)!.join('-')
+  )
+}
+
+export async function hashBackupCodes(codes: string[]): Promise<string[]> {
+  return Promise.all(codes.map((c) => hashPassword(c)))
+}
+
+export async function verifyBackupCode(code: string, hashes: string[]): Promise<number> {
+  // returns the index of the matching hash, or -1
+  for (let i = 0; i < hashes.length; i++) {
+    if (await verifyPassword(code, hashes[i])) return i
+  }
+  return -1
+}
+
+==================================================
+FILE: lib\auth\password.ts
+==================================================
+
+import bcrypt from 'bcryptjs'
+
+const ROUNDS = 12
+
+export async function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, ROUNDS)
+}
+
+export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(plain, hash)
+}
+
+==================================================
+FILE: lib\auth\rbac.ts
+==================================================
+
+import type { AdminRole } from '@/types/auth'
+export type { AdminRole }
+
+export const ROLES = {
+  SUPER_ADMIN: 'SUPER_ADMIN',
+  OPS: 'OPS',
+  FINANCE: 'FINANCE',
+  SUPPORT: 'SUPPORT',
+} as const
+
+export const PERMISSIONS: Record<string, AdminRole[]> = {
+  'dashboard:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'workers:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'workers:verify': ['SUPER_ADMIN', 'OPS'],
+  'users:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'bookings:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'payments:view': ['SUPER_ADMIN', 'FINANCE'],
+  'analytics:view': ['SUPER_ADMIN', 'OPS', 'FINANCE'],
+  'settings:view': ['SUPER_ADMIN'],
+  'settings:edit': ['SUPER_ADMIN'],
+  'admin_users:manage': ['SUPER_ADMIN'],
+  'waitlist:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'waitlist:manage': ['SUPER_ADMIN', 'OPS'], // status changes (pending â†’ invited â†’ converted)
+
+  // Users moderation
+  'users:warn': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'users:suspend': ['SUPER_ADMIN', 'OPS'],
+  'users:ban': ['SUPER_ADMIN'],
+  'users:edit': ['SUPER_ADMIN', 'OPS'],
+  'users:impersonate': ['SUPER_ADMIN'],
+
+  // Categories & Services
+  'categories:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'categories:create': ['SUPER_ADMIN'],
+  'categories:edit': ['SUPER_ADMIN'],
+  'services:edit': ['SUPER_ADMIN'],
+
+  // Workers moderation
+  'workers:warn': ['SUPER_ADMIN', 'OPS'],
+  'workers:suspend': ['SUPER_ADMIN', 'OPS'],
+  'workers:ban': ['SUPER_ADMIN'],
+  'workers:edit': ['SUPER_ADMIN', 'OPS'],
+  'workers:feature': ['SUPER_ADMIN', 'OPS'],
+  'workers:badge': ['SUPER_ADMIN', 'OPS'],
+  'workers:force-offline': ['SUPER_ADMIN', 'OPS'],
+
+  // Bookings actions
+  'bookings:cancel': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'bookings:override': ['SUPER_ADMIN', 'OPS'],
+  'bookings:reassign': ['SUPER_ADMIN', 'OPS'],
+  'bookings:escalate': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'bookings:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+
+  // Payments & finance
+  'payments:refund': ['SUPER_ADMIN', 'FINANCE'],
+  'payments:payout': ['SUPER_ADMIN', 'FINANCE'],
+  'payments:export': ['SUPER_ADMIN', 'FINANCE'],
+
+  // Disputes
+  'disputes:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'disputes:resolve': ['SUPER_ADMIN', 'OPS'], // escalated disputes: SUPER_ADMIN only, enforced in the resolve route
+  'disputes:assign': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // claim / release
+  'disputes:escalate': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'disputes:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // internal notes
+
+  // Notifications
+  'notifications:view': ['SUPER_ADMIN', 'OPS'],
+  'notifications:send': ['SUPER_ADMIN', 'OPS'],
+  'notifications:broadcast-all': ['SUPER_ADMIN'], // all users / all workers
+
+    // Live map
+  'map:view': ['SUPER_ADMIN', 'OPS'],
+
+    // Reviews & ratings
+  'reviews:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  'reviews:moderate': ['SUPER_ADMIN', 'OPS'], // hide / restore / dismiss reports
+  'reviews:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // internal notes
+}
+
+// Maps URL path prefixes -> required permission, used by middleware.ts
+// NOTE: order matters. permissionForPath uses find() + startsWith, so more specific prefixes must come first.
+export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
+  { prefix: '/workers/verification', permission: 'workers:verify' }, // must stay above '/workers'
+  { prefix: '/workers', permission: 'workers:view' },
+  { prefix: '/users', permission: 'users:view' },
+  { prefix: '/bookings', permission: 'bookings:view' },
+  { prefix: '/payments', permission: 'payments:view' },
+  { prefix: '/disputes', permission: 'disputes:view' },
+  { prefix: '/notifications', permission: 'notifications:view' },
+  { prefix: '/analytics', permission: 'analytics:view' },
+  { prefix: '/categories', permission: 'categories:view' },
+  { prefix: '/settings', permission: 'settings:view' },
+  { prefix: '/map', permission: 'map:view' },
+  { prefix: '/reviews', permission: 'reviews:view' },
+]
+
+export function hasPermission(role: AdminRole, permission: string): boolean {
+  return PERMISSIONS[permission]?.includes(role) ?? false
+}
+
+export function permissionForPath(pathname: string): string | null {
+  const match = ROUTE_PERMISSIONS.find((r) => pathname.startsWith(r.prefix))
+  return match?.permission ?? null
+}
+
+==================================================
+FILE: lib\auth\session.ts
+==================================================
+
+import { redis } from '@/lib/redis'
+import crypto from 'crypto'
+import type { AdminRole, SessionRecord } from '@/types/auth'
+
+const REFRESH_TTL = Number(process.env.ADMIN_REFRESH_TOKEN_TTL ?? 28800)
+const MAX_SESSIONS = Number(process.env.ADMIN_MAX_CONCURRENT_SESSIONS ?? 2)
+
+function sessionKey(refreshToken: string) {
+  return `admin:session:${refreshToken}`
+}
+function sessionSetKey(adminId: string) {
+  return `admin:sessions:${adminId}`
+}
+
+export async function createSession(
+  adminId: string,
+  email: string,
+  role: AdminRole,
+  ip: string
+): Promise<string> {
+  const refreshToken = crypto.randomBytes(32).toString('hex')
+  const record: SessionRecord = { adminId, email, role, createdAt: new Date().toISOString(), ip }
+
+  await redis.set(sessionKey(refreshToken), JSON.stringify(record), 'EX', REFRESH_TTL)
+
+  // Track sessions per admin, evict oldest if over the concurrent-session limit
+  const setKey = sessionSetKey(adminId)
+  await redis.zadd(setKey, Date.now(), refreshToken)
+  const count = await redis.zcard(setKey)
+  if (count > MAX_SESSIONS) {
+    const toEvict = await redis.zrange(setKey, 0, count - MAX_SESSIONS - 1)
+    if (toEvict.length) {
+      await redis.del(...toEvict.map(sessionKey))
+      await redis.zrem(setKey, ...toEvict)
+    }
+  }
+  await redis.expire(setKey, REFRESH_TTL)
+
+  return refreshToken
+}
+
+export async function getSession(refreshToken: string): Promise<SessionRecord | null> {
+  const raw = await redis.get(sessionKey(refreshToken))
+  return raw ? JSON.parse(raw) : null
+}
+
+export async function rotateSession(oldRefreshToken: string): Promise<string | null> {
+  const record = await getSession(oldRefreshToken)
+  if (!record) return null
+
+  await redis.del(sessionKey(oldRefreshToken))
+  await redis.zrem(sessionSetKey(record.adminId), oldRefreshToken)
+
+  return createSession(record.adminId, record.email, record.role, record.ip)
+}
+
+export async function destroySession(refreshToken: string): Promise<void> {
+  const record = await getSession(refreshToken)
+  await redis.del(sessionKey(refreshToken))
+  if (record) await redis.zrem(sessionSetKey(record.adminId), refreshToken)
+}
+
+==================================================
+FILE: lib\rbac-guard.ts
+==================================================
+
+// lib/rbac-guard.ts
+import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { verifyAccessToken } from '@/lib/auth/jwt'
+import { hasPermission } from '@/lib/auth/rbac'
+import type { AdminRole } from '@/types/auth'
+
+interface AdminContext {
+  adminId: string
+  adminEmail: string
+  role: AdminRole
+  sessionId: string
+}
+
+type PermissionResult =
+  | { ok: true; admin: AdminContext }
+  | { ok: false; response: NextResponse }
+
+export async function requirePermission(permission: string): Promise<PermissionResult> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('admin_access')?.value
+
+  if (!token) {
+    return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+
+  let payload
+  try {
+    payload = await verifyAccessToken(token)
+  } catch {
+    return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+
+  if (!hasPermission(payload.role, permission)) {
+    return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  }
+
+  return {
+    ok: true,
+    admin: {
+      adminId: payload.sub,
+      adminEmail: payload.email,
+      role: payload.role,
+      sessionId: payload.sessionId,
+    },
+  }
+}
+
+==================================================
+FILE: lib\audit.ts
+==================================================
+
+// lib/audit.ts
+import { db } from '@/lib/db'
+
+interface AuditParams {
+  adminId: string | null
+  adminEmail: string
+  action: string
+  resourceType?: string
+  resourceId?: string
+  oldValue?: unknown
+  newValue?: unknown
+  notes?: string
+  ip: string
+  userAgent?: string
+}
+
+export async function logAdminAction(params: AuditParams) {
+  await db.query(
+    `INSERT INTO admin_audit_log
+      (admin_id, admin_email, action, resource_type, resource_id, old_value, new_value, notes, ip_address, user_agent)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [
+      params.adminId,
+      params.adminEmail,
+      params.action,
+      params.resourceType ?? null,
+      params.resourceId ?? null,
+      params.oldValue ? JSON.stringify(params.oldValue) : null,
+      params.newValue ? JSON.stringify(params.newValue) : null,
+      params.notes ?? null,
+      params.ip,
+      params.userAgent ?? null,
+    ]
+  )
+}
+
+// Extracts client IP from standard proxy headers.
+// Works on Vercel and any reverse proxy (nginx, Cloudflare) forwarding x-forwarded-for.
+export function getClientIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for')
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0].trim()
+  }
+  const realIp = request.headers.get('x-real-ip')
+  if (realIp) return realIp
+  return 'unknown'
+}
+
+==================================================
+FILE: lib\db.ts
+==================================================
+
+import { Pool } from 'pg'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var _pgPool: Pool | undefined
+}
+
+export const db =
+  global._pgPool ??
+  new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 10,
+    idleTimeoutMillis: 30000,
+    ssl:
+      process.env.DATABASE_URL?.includes('supabase.com') ||
+      process.env.DATABASE_URL?.includes('aws') ||
+      process.env.NODE_ENV === 'production'
+        ? { rejectUnauthorized: false }
+        : undefined,
+  })
+
+if (process.env.NODE_ENV !== 'production') global._pgPool = db
+
+==================================================
+FILE: lib\redis.ts
+==================================================
+
+import Redis from 'ioredis'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var _redis: Redis | undefined
+}
+
+export const redis = global._redis ?? new Redis(process.env.REDIS_URL!)
+
+if (process.env.NODE_ENV !== 'production') global._redis = redis
+
+==================================================
+FILE: lib\parse-user-agent.ts
+==================================================
+
+// lib/parse-user-agent.ts
+import { UAParser } from 'ua-parser-js'
+
+export interface ParsedUserAgent {
+  isBot: boolean
+  deviceType: string
+  browser: string
+  os: string
+}
+
+// Catches your own Postman/curl/internal-tooling traffic so it doesn't
+// pollute "real visitor" device/browser stats.
+const BOT_PATTERN = /bot|crawler|spider|postman|curl|python-requests|axios|okhttp|insomnia/i
+
+export function parseUserAgent(userAgent: string | null): ParsedUserAgent {
+  if (!userAgent) {
+    return { isBot: false, deviceType: 'Unknown', browser: 'Unknown', os: 'Unknown' }
+  }
+
+  if (BOT_PATTERN.test(userAgent)) {
+    return { isBot: true, deviceType: 'Bot / API client', browser: 'N/A', os: 'N/A' }
+  }
+
+  const result = new UAParser(userAgent).getResult()
+
+  const deviceType = result.device.type
+    ? result.device.type.charAt(0).toUpperCase() + result.device.type.slice(1)
+    : 'Desktop' // ua-parser-js leaves type undefined for normal desktop UAs
+
+  return {
+    isBot: false,
+    deviceType,
+    browser: result.browser.name ?? 'Unknown',
+    os: result.os.name ?? 'Unknown',
+  }
+}
+
+==================================================
+FILE: lib\swr-fetcher.ts
+==================================================
+
+// lib/swr-fetcher.ts
+export const fetcher = async (url: string) => {
+  const res = await fetch(url)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || 'Request failed')
+  }
+  return res.json()
+}
+
+==================================================
+FILE: lib\nav-config.ts
+==================================================
+
+// lib/nav-config.ts
+import type { LucideIcon } from 'lucide-react'
+import {
+  LayoutDashboard,
+  ShieldCheck,
+  Users,
+  Wrench,
+  ClipboardList,
+  Wallet,
+  Gavel,
+  BarChart3,
+  ListPlus,
+  Star,
+  Bell,
+  Map,
+  Tags,
+  Settings,
+} from 'lucide-react'
+import type { AdminRole } from '@/lib/auth/rbac'
+
+export interface NavItem {
+  label: string
+  href: string
+  icon: LucideIcon
+  allowedRoles: AdminRole[]
+}
+
+export const NAV_ITEMS: NavItem[] = [
+  {
+    label: 'Dashboard',
+    href: '/',
+    icon: LayoutDashboard,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  },
+  {
+    label: 'Worker Verification',
+    href: '/workers/verification',
+    icon: ShieldCheck,
+    allowedRoles: ['SUPER_ADMIN', 'OPS'],
+  },
+  {
+    label: 'Users',
+    href: '/users',
+    icon: Users,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  },
+  {
+    label: 'Workers',
+    href: '/workers',
+    icon: Wrench,
+    allowedRoles: ['SUPER_ADMIN', 'OPS'],
+  },
+  {
+    label: 'Bookings',
+    href: '/bookings',
+    icon: ClipboardList,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  },
+  {
+    label: 'Payments & Finance',
+    href: '/payments',
+    icon: Wallet,
+    allowedRoles: ['SUPER_ADMIN', 'FINANCE'],
+  },
+  {
+    label: 'Disputes & Refunds',
+    href: '/disputes',
+    icon: Gavel,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  },
+  {
+    label: 'Analytics',
+    href: '/analytics',
+    icon: BarChart3,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE'],
+  },
+  {
+    label: 'Waitlist',
+    href: '/waitlist',
+    icon: ListPlus,
+    allowedRoles: ['SUPER_ADMIN', 'OPS'],
+  },
+  {
+    label: 'Reviews & Ratings',
+    href: '/reviews',
+    icon: Star,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+  },
+  {
+    label: 'Notifications',
+    href: '/notifications',
+    icon: Bell,
+    allowedRoles: ['SUPER_ADMIN', 'OPS'],
+  },
+  {
+    label: 'Live Map',
+    href: '/map',
+    icon: Map,
+    allowedRoles: ['SUPER_ADMIN', 'OPS'],
+  },
+  {
+    label: 'Categories & Pricing',
+    href: '/categories',
+    icon: Tags,
+    allowedRoles: ['SUPER_ADMIN'],
+  },
+  {
+    label: 'Settings',
+    href: '/settings',
+    icon: Settings,
+    allowedRoles: ['SUPER_ADMIN'],
+  },
+]
+
+==================================================
+FILE: types\auth.ts
+==================================================
+
+export type AdminRole = 'SUPER_ADMIN' | 'OPS' | 'FINANCE' | 'SUPPORT'
+
+export interface AdminUser {
+  id: string
+  email: string
+  fullName: string
+  role: AdminRole
+  isActive: boolean
+  mfaEnabled: boolean
+}
+
+export interface AccessTokenPayload {
+  sub: string          // admin id
+  email: string
+  role: AdminRole
+  sessionId: string
+  type: 'access'
+}
+
+export interface MfaTempTokenPayload {
+  sub: string
+  purpose: 'mfa_pending'
+  type: 'mfa_temp'
+}
+
+export interface SessionRecord {
+  adminId: string
+  email: string
+  role: AdminRole
+  createdAt: string
+  ip: string
+}
+
+==================================================
+FILE: db\migrations\001_admin_auth.sql
+==================================================
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE admin_users (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email           VARCHAR(255) UNIQUE NOT NULL,
+  password_hash   VARCHAR(255) NOT NULL,
+  full_name       VARCHAR(255) NOT NULL,
+  role            VARCHAR(50) NOT NULL CHECK (role IN ('SUPER_ADMIN','OPS','FINANCE','SUPPORT')),
+  is_active       BOOLEAN DEFAULT TRUE,
+  mfa_secret      VARCHAR(255),              -- encrypted TOTP secret, null until set up
+  mfa_enabled     BOOLEAN DEFAULT FALSE,
+  last_login_at   TIMESTAMPTZ,
+  last_login_ip   VARCHAR(50),
+  failed_attempts INTEGER DEFAULT 0,
+  locked_until    TIMESTAMPTZ,
+  created_by      UUID REFERENCES admin_users(id),
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE admin_mfa_backup_codes (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  admin_id    UUID NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+  code_hash   VARCHAR(255) NOT NULL,   -- bcrypt hash of the backup code
+  used_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE admin_audit_log (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  admin_id      UUID REFERENCES admin_users(id),
+  admin_email   VARCHAR(255),
+  action        VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(100),
+  resource_id   UUID,
+  old_value     JSONB,
+  new_value     JSONB,
+  notes         TEXT,
+  ip_address    VARCHAR(50),
+  user_agent    TEXT,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_admin_audit_log_admin_id ON admin_audit_log(admin_id);
+CREATE INDEX idx_admin_audit_log_created_at ON admin_audit_log(created_at DESC);
+CREATE INDEX idx_admin_users_email ON admin_users(email);
+
+==================================================
+FILE: scripts\seed-super-admin.ts
+==================================================
+
+import 'dotenv/config'
+import { createInterface } from 'readline/promises'
+import { stdin as input, stdout as output } from 'process'
+
+async function prompt() {
+  const rl = createInterface({ input, output })
+  try {
+    const email = (await rl.question('Super admin email: ')).trim()
+    const fullName = (await rl.question('Full name: ')).trim()
+    const password = await rl.question(
+      'Temporary password (change after first login): '
+    )
+    return { email, fullName, password }
+  } finally {
+    rl.close()
+  }
+}
+
+async function main() {
+  const { hashPassword } = await import('../lib/auth/password')
+  const { db } = await import('../lib/db')
+
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS count FROM admin_users WHERE role = 'SUPER_ADMIN'`
+  )
+  if (rows[0].count >= 2) {
+    console.error('Maximum of 2 super admins already exist.')
+    console.error('Additional admins must be created through the admin panel.')
+    return
+  }
+
+  const { email, fullName, password } = await prompt()
+
+  if (!email || !fullName || !password) {
+    console.error('Email, full name, and password are required.')
+    return
+  }
+
+  const existing = await db.query(
+    `SELECT id FROM admin_users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
+    [email]
+  )
+  if (existing.rows.length > 0) {
+    console.error(`An admin account with ${email} already exists.`)
+    return
+  }
+
+  const hash = await hashPassword(password)
+
+  await db.query(
+    `INSERT INTO admin_users (email, password_hash, full_name, role, is_active)
+     VALUES ($1, $2, $3, 'SUPER_ADMIN', TRUE)`,
+    [email, hash, fullName]
+  )
+
+  console.log(`\nSuper admin ${email} created successfully.`)
+  console.log('MFA setup will be required on first login.')
+}
+
+main()
+  .catch((e) => {
+    console.error('Failed to create super admin:', e)
+    process.exitCode = 1
+  })
+  .finally(() => process.exit())
+
+==================================================
+FILE: app\api\admin\auth\login\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { db } from '@/lib/db'
+import { verifyPassword } from '@/lib/auth/password'
+import { signAccessToken, signMfaTempToken } from '@/lib/auth/jwt'
+import { createSession } from '@/lib/auth/session'
+import { logAdminAction } from '@/lib/audit'
+import { setAuthCookies } from '@/lib/auth/cookies'
+
+const schema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+})
+
+const MAX_ATTEMPTS = Number(process.env.ADMIN_MAX_FAILED_ATTEMPTS ?? 5)
+const LOCKOUT_MINUTES = Number(process.env.ADMIN_LOCKOUT_MINUTES ?? 30)
+
+export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') ?? 'unknown'
+  const body = schema.safeParse(await req.json())
+  if (!body.success) {
+    return NextResponse.json({ error: 'Invalid email or password format' }, { status: 400 })
+  }
+  const { email, password } = body.data
+
+  const { rows } = await db.query('SELECT * FROM admin_users WHERE email = $1', [email])
+  const admin = rows[0]
+
+  // Deliberately identical error for "no account" and "wrong password" â€” don't leak which one
+  const genericError = { error: 'Invalid email or password' }
+
+  if (!admin || !admin.is_active) {
+    return NextResponse.json(genericError, { status: 401 })
+  }
+
+  if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+    return NextResponse.json(
+      { error: `Account locked. Try again after ${new Date(admin.locked_until).toLocaleTimeString()}.` },
+      { status: 423 }
+    )
+  }
+
+  const valid = await verifyPassword(password, admin.password_hash)
+
+  if (!valid) {
+    const attempts = admin.failed_attempts + 1
+    const lockUntil = attempts >= MAX_ATTEMPTS
+      ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000)
+      : null
+
+    await db.query(
+      'UPDATE admin_users SET failed_attempts = $1, locked_until = $2 WHERE id = $3',
+      [attempts, lockUntil, admin.id]
+    )
+    await logAdminAction({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'auth.login_failed',
+      ip,
+      notes: `Failed attempt ${attempts}/${MAX_ATTEMPTS}`,
+    })
+
+    return NextResponse.json(genericError, { status: 401 })
+  }
+
+  // Success â€” reset failed attempts
+  await db.query(
+    'UPDATE admin_users SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW(), last_login_ip = $1 WHERE id = $2',
+    [ip, admin.id]
+  )
+
+  if (admin.mfa_enabled) {
+    const tempToken = await signMfaTempToken(admin.id)
+    await logAdminAction({
+      adminId: admin.id, adminEmail: admin.email, action: 'auth.login_mfa_pending', ip,
+    })
+    return NextResponse.json({ requiresMFA: true, tempToken })
+  }
+
+  // No MFA set up yet â€” issue full session (MFA setup is enforced on first login, see below)
+  const refreshToken = await createSession(admin.id, admin.email, admin.role, ip)
+  const accessToken = await signAccessToken({
+    sub: admin.id, email: admin.email, role: admin.role, sessionId: refreshToken,
+  })
+
+  await logAdminAction({ adminId: admin.id, adminEmail: admin.email, action: 'auth.login_success', ip })
+
+  const res = NextResponse.json({
+    accessToken,
+    admin: { id: admin.id, email: admin.email, fullName: admin.full_name, role: admin.role, mfaEnabled: false },
+    mfaSetupRequired: admin.role === 'SUPER_ADMIN', // mandatory for SUPER_ADMIN per your spec
+  })
+  setAuthCookies(res, accessToken, refreshToken)
+  return res
+}
+
+==================================================
+FILE: app\api\admin\auth\logout\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { destroySession, getSession } from '@/lib/auth/session'
+import { logAdminAction } from '@/lib/audit'
+
+export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') ?? 'unknown'
+  const refreshToken = req.cookies.get('admin_session')?.value
+
+  if (refreshToken) {
+    const session = await getSession(refreshToken)
+    await destroySession(refreshToken)
+    if (session) {
+      await logAdminAction({ adminId: session.adminId, adminEmail: session.email, action: 'auth.logout', ip })
+    }
+  }
+
+  const res = NextResponse.json({ ok: true })
+  res.cookies.delete('admin_session')
+  return res
+}
+
+==================================================
+FILE: app\api\admin\auth\mfa\setup\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { verifyAccessToken } from '@/lib/auth/jwt'
+import { generateMfaSecret, generateMfaQrCode } from '@/lib/auth/mfa'
+import { redis } from '@/lib/redis'
+
+export async function POST(req: NextRequest) {
+  const auth = req.headers.get('authorization')?.replace('Bearer ', '')
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const payload = await verifyAccessToken(auth).catch(() => null)
+  if (!payload) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const secret = generateMfaSecret()
+  const qrCodeDataUrl = await generateMfaQrCode(payload.email, secret)
+
+  // Stash the pending secret for 10 minutes â€” only committed to admin_users on confirm
+  await redis.set(`admin:mfa_pending:${payload.sub}`, secret, 'EX', 600)
+
+  return NextResponse.json({ qrCodeDataUrl, secret }) // secret shown as manual-entry fallback
+}
+
+==================================================
+FILE: app\api\admin\auth\mfa\setup-confirm\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { db } from '@/lib/db'
+import { verifyAccessToken } from '@/lib/auth/jwt'
+import { verifyTotp, generateBackupCodes, hashBackupCodes } from '@/lib/auth/mfa'
+import { redis } from '@/lib/redis'
+import { logAdminAction } from '@/lib/audit'
+
+const schema = z.object({ code: z.string().min(6) })
+
+export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') ?? 'unknown'
+  const auth = req.headers.get('authorization')?.replace('Bearer ', '')
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const payload = await verifyAccessToken(auth).catch(() => null)
+  if (!payload) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = schema.safeParse(await req.json())
+  if (!body.success) return NextResponse.json({ error: 'Invalid code' }, { status: 400 })
+
+  const pendingSecret = await redis.get(`admin:mfa_pending:${payload.sub}`)
+  if (!pendingSecret) {
+    return NextResponse.json({ error: 'Setup session expired, start again' }, { status: 400 })
+  }
+
+  if (!verifyTotp(body.data.code, pendingSecret)) {
+    return NextResponse.json({ error: 'Incorrect code' }, { status: 400 })
+  }
+
+  await db.query('UPDATE admin_users SET mfa_secret = $1, mfa_enabled = TRUE WHERE id = $2', [
+    pendingSecret, payload.sub,
+  ])
+  await redis.del(`admin:mfa_pending:${payload.sub}`)
+
+  const backupCodes = generateBackupCodes(10)
+  const hashes = await hashBackupCodes(backupCodes)
+  await db.query('DELETE FROM admin_mfa_backup_codes WHERE admin_id = $1', [payload.sub])
+  for (const hash of hashes) {
+    await db.query('INSERT INTO admin_mfa_backup_codes (admin_id, code_hash) VALUES ($1, $2)', [
+      payload.sub, hash,
+    ])
+  }
+
+  await logAdminAction({ adminId: payload.sub, adminEmail: payload.email, action: 'auth.mfa_enabled', ip })
+
+  // Backup codes are shown to the admin exactly once â€” plaintext, never stored, never logged
+  return NextResponse.json({ backupCodes })
+}
+
+==================================================
+FILE: app\api\admin\auth\mfa\verify\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { db } from '@/lib/db'
+import { verifyMfaTempToken, signAccessToken } from '@/lib/auth/jwt'
+import { verifyTotp, verifyBackupCode } from '@/lib/auth/mfa'
+import { createSession } from '@/lib/auth/session'
+import { logAdminAction } from '@/lib/audit'
+import { setAuthCookies } from '@/lib/auth/cookies'
+
+const schema = z.object({
+  tempToken: z.string(),
+  code: z.string().min(6),
+})
+
+export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') ?? 'unknown'
+  const body = schema.safeParse(await req.json())
+  if (!body.success) return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+
+  let adminId: string
+  try {
+    const payload = await verifyMfaTempToken(body.data.tempToken)
+    adminId = payload.sub
+  } catch {
+    return NextResponse.json({ error: 'MFA session expired, please log in again' }, { status: 401 })
+  }
+
+  const { rows } = await db.query('SELECT * FROM admin_users WHERE id = $1', [adminId])
+  const admin = rows[0]
+  if (!admin) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+
+  const totpValid = admin.mfa_secret ? verifyTotp(body.data.code, admin.mfa_secret) : false
+
+  let usedBackupCode = false
+  if (!totpValid) {
+    const { rows: backupRows } = await db.query(
+      'SELECT id, code_hash FROM admin_mfa_backup_codes WHERE admin_id = $1 AND used_at IS NULL',
+      [adminId]
+    )
+    const idx = await verifyBackupCode(body.data.code, backupRows.map((r) => r.code_hash))
+    if (idx === -1) {
+      await logAdminAction({ adminId, adminEmail: admin.email, action: 'auth.mfa_failed', ip })
+      return NextResponse.json({ error: 'Invalid code' }, { status: 401 })
+    }
+    usedBackupCode = true
+    await db.query('UPDATE admin_mfa_backup_codes SET used_at = NOW() WHERE id = $1', [backupRows[idx].id])
+  }
+
+  const refreshToken = await createSession(admin.id, admin.email, admin.role, ip)
+  const accessToken = await signAccessToken({
+    sub: admin.id, email: admin.email, role: admin.role, sessionId: refreshToken,
+  })
+
+  await logAdminAction({
+    adminId: admin.id, adminEmail: admin.email, ip,
+    action: usedBackupCode ? 'auth.mfa_success_backup_code' : 'auth.mfa_success',
+  })
+
+  const res = NextResponse.json({
+    accessToken,
+    admin: { id: admin.id, email: admin.email, fullName: admin.full_name, role: admin.role, mfaEnabled: true },
+  })
+  setAuthCookies(res, accessToken, refreshToken)
+  return res
+}
+
+==================================================
+FILE: app\api\admin\auth\refresh\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { rotateSession, getSession } from '@/lib/auth/session'
+import { signAccessToken } from '@/lib/auth/jwt'
+
+export async function POST(req: NextRequest) {
+  const oldRefreshToken = req.cookies.get('admin_session')?.value
+  if (!oldRefreshToken) return NextResponse.json({ error: 'No session' }, { status: 401 })
+
+  const existing = await getSession(oldRefreshToken)
+  if (!existing) return NextResponse.json({ error: 'Session expired' }, { status: 401 })
+
+  const newRefreshToken = await rotateSession(oldRefreshToken)
+  if (!newRefreshToken) return NextResponse.json({ error: 'Session expired' }, { status: 401 })
+
+  const accessToken = await signAccessToken({
+    sub: existing.adminId, email: existing.email, role: existing.role, sessionId: newRefreshToken,
+  })
+
+  const res = NextResponse.json({ accessToken })
+  res.cookies.set('admin_session', newRefreshToken, {
+    httpOnly: true, secure: true, sameSite: 'strict', path: '/',
+    maxAge: Number(process.env.ADMIN_REFRESH_TOKEN_TTL ?? 28800),
+  })
+  return res
+}
+
+==================================================
+FILE: app\api\admin\auth\session\route.ts
+==================================================
+
+export const runtime = 'nodejs'
+
+import { NextRequest, NextResponse } from 'next/server'
+import { verifyAccessToken } from '@/lib/auth/jwt'
+import { db } from '@/lib/db'
+
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get('authorization')?.replace('Bearer ', '')
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const payload = await verifyAccessToken(auth).catch(() => null)
+  if (!payload) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { rows } = await db.query(
+    'SELECT id, email, full_name, role, mfa_enabled FROM admin_users WHERE id = $1',
+    [payload.sub]
+  )
+  if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const a = rows[0]
+  return NextResponse.json({
+    id: a.id, email: a.email, fullName: a.full_name, role: a.role, mfaEnabled: a.mfa_enabled,
+  })
+}

@@ -1,97 +1,192 @@
 export const runtime = 'nodejs'
 
+import crypto from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { verifyPassword } from '@/lib/auth/password'
-import { signAccessToken, signMfaTempToken } from '@/lib/auth/jwt'
+import { redis } from '@/lib/redis'
+import { verifyPassword, hashPassword } from '@/lib/auth/password'
+import { signMfaTempToken } from '@/lib/auth/jwt'
 import { createSession } from '@/lib/auth/session'
-import { logAdminAction } from '@/lib/audit'
-import { setAuthCookies } from '@/lib/auth/cookies'
+import { findTrustedDevice } from '@/lib/auth/trusted-device'
+import { buildAuthResponse, markLoginSuccess } from '@/lib/auth/issue'
+import { COOKIE, setMfaTempCookie } from '@/lib/auth/cookies'
+import { AUTH_CONFIG } from '@/lib/auth/config'
+import { hit } from '@/lib/auth/rate-limit'
+import { getClientIp, getUserAgent, logAuthEvent } from '@/lib/audit'
 
 const schema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().trim().toLowerCase().email().max(255),
+  password: z.string().min(1).max(128),
 })
 
-const MAX_ATTEMPTS = Number(process.env.ADMIN_MAX_FAILED_ATTEMPTS ?? 5)
-const LOCKOUT_MINUTES = Number(process.env.ADMIN_LOCKOUT_MINUTES ?? 30)
+// Compared against when the email does not exist, so "no account" costs the same time as "wrong password".
+const dummyHash = hashPassword(crypto.randomBytes(16).toString('hex'))
+
+const genericError = () => NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
+
+function tooMany(retryAfter: number) {
+  return NextResponse.json(
+    { error: 'Too many attempts. Please wait a few minutes and try again.' },
+    { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+  )
+}
 
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get('x-forwarded-for') ?? 'unknown'
-  const body = schema.safeParse(await req.json())
+  const ip = getClientIp(req)
+  const userAgent = getUserAgent(req)
+
+  const ipLimit = await hit(`login:ip:${ip}`, 30, 900)
+  if (!ipLimit.allowed) return tooMany(ipLimit.retryAfter)
+
+  let raw: unknown
+  try {
+    raw = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+  }
+  const body = schema.safeParse(raw)
   if (!body.success) {
     return NextResponse.json({ error: 'Invalid email or password format' }, { status: 400 })
   }
   const { email, password } = body.data
 
-  const { rows } = await db.query('SELECT * FROM admin_users WHERE email = $1', [email])
+  const emailLimit = await hit(`login:email:${email}`, 15, 900)
+  if (!emailLimit.allowed) return tooMany(emailLimit.retryAfter)
+
+  const { rows } = await db.query('SELECT * FROM admin_users WHERE LOWER(email) = $1', [email])
   const admin = rows[0]
 
-  // Deliberately identical error for "no account" and "wrong password" — don't leak which one
-  const genericError = { error: 'Invalid email or password' }
+  const isLocked = Boolean(admin?.locked_until && new Date(admin.locked_until) > new Date())
+  const valid = await verifyPassword(password, admin?.password_hash ?? (await dummyHash))
 
-  if (!admin || !admin.is_active) {
-    return NextResponse.json(genericError, { status: 401 })
+  if (!admin || !admin.is_active || !valid) {
+    // Atomic increment: parallel guesses cannot out-run the lockout.
+    if (admin?.is_active && !valid && !isLocked) {
+      const { rows: upd } = await db.query(
+        `UPDATE admin_users
+            SET failed_attempts = COALESCE(failed_attempts, 0) + 1,
+                locked_until = CASE WHEN COALESCE(failed_attempts, 0) + 1 >= $2
+                                    THEN NOW() + make_interval(mins => $3::int)
+                                    ELSE locked_until END
+          WHERE id = $1
+      RETURNING failed_attempts`,
+        [admin.id, AUTH_CONFIG.maxFailedAttempts, AUTH_CONFIG.lockoutMinutes]
+      )
+      await logAuthEvent({
+        adminId: admin.id,
+        adminEmail: admin.email,
+        action: 'auth.login_failed',
+        ip,
+        userAgent: userAgent ?? undefined,
+        notes: `Failed attempt ${upd[0]?.failed_attempts}/${AUTH_CONFIG.maxFailedAttempts}`,
+      })
+    }
+    return genericError()
   }
 
-  if (admin.locked_until && new Date(admin.locked_until) > new Date()) {
+  // Only someone who knows the right password learns the account is locked (no enumeration).
+  if (isLocked) {
     return NextResponse.json(
       { error: `Account locked. Try again after ${new Date(admin.locked_until).toLocaleTimeString()}.` },
       { status: 423 }
     )
   }
 
-  const valid = await verifyPassword(password, admin.password_hash)
+  const adminRow = {
+    id: admin.id,
+    email: admin.email,
+    full_name: admin.full_name,
+    role: admin.role,
+    mfa_enabled: Boolean(admin.mfa_enabled),
+  }
 
-  if (!valid) {
-    const attempts = admin.failed_attempts + 1
-    const lockUntil = attempts >= MAX_ATTEMPTS
-      ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000)
-      : null
+  // ---- MFA enrolled -----------------------------------------------------------
+  if (admin.mfa_enabled) {
+    // Trusted device? Skip the code. Session never outlives the trust window.
+    const trusted = await findTrustedDevice(admin.id, req.cookies.get(COOKIE.device)?.value)
+    if (trusted) {
+      const maxTtlSeconds = Math.floor((trusted.expiresAt.getTime() - Date.now()) / 1000)
+      if (maxTtlSeconds > 60) {
+        const session = await createSession({
+          adminId: admin.id,
+          email: admin.email,
+          role: admin.role,
+          ip,
+          userAgent,
+          remember: true,
+          mfaVerified: true,
+          maxTtlSeconds,
+        })
+        await markLoginSuccess(admin.id, ip)
+        await logAuthEvent({
+          adminId: admin.id,
+          adminEmail: admin.email,
+          action: 'auth.login_trusted_device',
+          ip,
+          userAgent: userAgent ?? undefined,
+        })
+        return buildAuthResponse({ admin: adminRow, session, scope: 'full' })
+      }
+    }
 
-    await db.query(
-      'UPDATE admin_users SET failed_attempts = $1, locked_until = $2 WHERE id = $3',
-      [attempts, lockUntil, admin.id]
-    )
-    await logAdminAction({
+    const { token, jti } = await signMfaTempToken(admin.id)
+    await redis.set(`admin:mfa_tmp:${jti}`, admin.id, 'EX', AUTH_CONFIG.mfaTempTtl)
+    await logAuthEvent({
       adminId: admin.id,
       adminEmail: admin.email,
-      action: 'auth.login_failed',
+      action: 'auth.login_mfa_pending',
       ip,
-      notes: `Failed attempt ${attempts}/${MAX_ATTEMPTS}`,
+      userAgent: userAgent ?? undefined,
     })
-
-    return NextResponse.json(genericError, { status: 401 })
+    const res = NextResponse.json({ requiresMFA: true })
+    setMfaTempCookie(res, token) // httpOnly, only sent to /api/admin/auth/mfa/*
+    return res
   }
 
-  // Success — reset failed attempts
-  await db.query(
-    'UPDATE admin_users SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW(), last_login_ip = $1 WHERE id = $2',
-    [ip, admin.id]
-  )
-
-  if (admin.mfa_enabled) {
-    const tempToken = await signMfaTempToken(admin.id)
-    await logAdminAction({
-      adminId: admin.id, adminEmail: admin.email, action: 'auth.login_mfa_pending', ip,
+  // ---- No MFA yet -------------------------------------------------------------
+  if (AUTH_CONFIG.mfaRequired) {
+    // Limited session: can reach the MFA setup page/API and nothing else.
+    const session = await createSession({
+      adminId: admin.id,
+      email: admin.email,
+      role: admin.role,
+      ip,
+      userAgent,
+      remember: false,
+      mfaVerified: false,
     })
-    return NextResponse.json({ requiresMFA: true, tempToken })
+    await logAuthEvent({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'auth.login_mfa_setup_required',
+      ip,
+      userAgent: userAgent ?? undefined,
+    })
+    return buildAuthResponse({
+      admin: adminRow,
+      session,
+      scope: 'mfa_setup',
+      body: { mfaSetupRequired: true },
+    })
   }
 
-  // No MFA set up yet — issue full session (MFA setup is enforced on first login, see below)
-  const refreshToken = await createSession(admin.id, admin.email, admin.role, ip)
-  const accessToken = await signAccessToken({
-    sub: admin.id, email: admin.email, role: admin.role, sessionId: refreshToken,
+  const session = await createSession({
+    adminId: admin.id,
+    email: admin.email,
+    role: admin.role,
+    ip,
+    userAgent,
+    remember: false,
+    mfaVerified: true,
   })
-
-  await logAdminAction({ adminId: admin.id, adminEmail: admin.email, action: 'auth.login_success', ip })
-
-  const res = NextResponse.json({
-    accessToken,
-    admin: { id: admin.id, email: admin.email, fullName: admin.full_name, role: admin.role, mfaEnabled: false },
-    mfaSetupRequired: admin.role === 'SUPER_ADMIN', // mandatory for SUPER_ADMIN per your spec
+  await markLoginSuccess(admin.id, ip)
+  await logAuthEvent({
+    adminId: admin.id,
+    adminEmail: admin.email,
+    action: 'auth.login_success',
+    ip,
+    userAgent: userAgent ?? undefined,
   })
-  setAuthCookies(res, accessToken, refreshToken)
-  return res
+  return buildAuthResponse({ admin: adminRow, session, scope: 'full' })
 }

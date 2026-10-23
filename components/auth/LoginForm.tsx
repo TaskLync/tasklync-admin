@@ -1,10 +1,21 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { safeNextPath } from '@/lib/auth/redirect'
+
+interface LoginResponse {
+  error?: string
+  requiresMFA?: boolean
+  mfaSetupRequired?: boolean
+}
 
 export function LoginForm() {
   const router = useRouter()
+  const params = useSearchParams()
+  const next = safeNextPath(params.get('next'))
+  const expired = params.get('reason') === 'expired'
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -18,10 +29,11 @@ export function LoginForm() {
       const res = await fetch('/api/admin/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ email, password }),
       })
 
-      let data: any = null
+      let data: LoginResponse | null = null
       try {
         data = await res.json()
       } catch {
@@ -32,13 +44,15 @@ export function LoginForm() {
         setError(data?.error ?? 'Something went wrong')
         return
       }
-      if (data.requiresMFA) {
-        sessionStorage.setItem('mfa_temp_token', data.tempToken)
-        router.push('/auth/mfa')
+
+      if (data?.requiresMFA) {
+        router.push(next === '/' ? '/auth/mfa' : `/auth/mfa?next=${encodeURIComponent(next)}`)
         return
       }
-      sessionStorage.setItem('admin_access_token', data.accessToken)
-      router.push(data.mfaSetupRequired ? '/auth/mfa-setup' : '/')
+
+      // Trusted device: signed in without a code. Tokens are already in httpOnly cookies.
+      router.replace(data?.mfaSetupRequired ? '/auth/mfa-setup' : next)
+      router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error. Please try again.')
     } finally {
@@ -49,6 +63,10 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-4 bg-bg-surface border border-border rounded-lg p-6 w-full max-w-sm">
       <h1 className="text-lg font-semibold text-text-primary">Admin Sign In</h1>
+
+      {expired && !error && (
+        <p className="text-xs text-text-secondary">Your session expired. Please sign in again.</p>
+      )}
 
       <div>
         <label htmlFor="email" className="text-xs font-medium text-gray-700 block mb-1">

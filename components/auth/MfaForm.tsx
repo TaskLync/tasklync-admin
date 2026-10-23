@@ -1,11 +1,20 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { safeNextPath } from '@/lib/auth/redirect'
+
+interface VerifyResponse {
+  error?: string
+}
 
 export function MfaForm() {
   const router = useRouter()
+  const params = useSearchParams()
+  const next = safeNextPath(params.get('next'))
+
   const [code, setCode] = useState('')
+  const [remember, setRemember] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -14,33 +23,32 @@ export function MfaForm() {
     setError(null)
     setLoading(true)
     try {
-      const tempToken = sessionStorage.getItem('mfa_temp_token')
-      if (!tempToken) {
-        setError('Your session expired. Please sign in again.')
-        router.push('/auth/login')
-        return
-      }
-
+      // The MFA challenge lives in an httpOnly cookie. Nothing to read from sessionStorage.
       const res = await fetch('/api/admin/auth/mfa/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tempToken, code }),
+        credentials: 'same-origin',
+        body: JSON.stringify({ code: code.trim(), remember }),
       })
 
-      let data: any = null
+      let data: VerifyResponse | null = null
       try {
         data = await res.json()
       } catch {
         throw new Error('Server error. Please try again in a moment.')
       }
 
+      if (res.status === 401 && data?.error?.toLowerCase().includes('expired')) {
+        router.replace('/auth/login?reason=expired')
+        return
+      }
       if (!res.ok) {
         setError(data?.error ?? 'Invalid code')
         return
       }
-      sessionStorage.removeItem('mfa_temp_token')
-      sessionStorage.setItem('admin_access_token', data.accessToken)
-      router.push('/')
+
+      router.replace(next)
+      router.refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error. Please try again.')
     } finally {
@@ -72,6 +80,20 @@ export function MfaForm() {
         />
       </div>
 
+      <label className="flex items-start gap-2 text-xs text-text-secondary cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={remember}
+          onChange={(e) => setRemember(e.target.checked)}
+          disabled={loading}
+          className="mt-0.5"
+        />
+        <span>
+          Remember this device for 7 days
+          <span className="block text-text-muted">Don&apos;t tick this on a shared computer.</span>
+        </span>
+      </label>
+
       {error && (
         <p role="alert" className="text-xs text-danger">
           {error}
@@ -90,6 +112,14 @@ export function MfaForm() {
           />
         )}
         {loading ? 'Verifying…' : 'Verify'}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => router.replace('/auth/login')}
+        className="cursor-pointer w-full text-xs text-text-secondary hover:underline"
+      >
+        Back to sign in
       </button>
     </form>
   )

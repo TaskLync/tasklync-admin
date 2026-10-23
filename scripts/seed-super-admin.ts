@@ -5,10 +5,10 @@ import { stdin as input, stdout as output } from 'process'
 async function prompt() {
   const rl = createInterface({ input, output })
   try {
-    const email = (await rl.question('Super admin email: ')).trim()
+    const email = (await rl.question('Super admin email: ')).trim().toLowerCase()
     const fullName = (await rl.question('Full name: ')).trim()
     const password = await rl.question(
-      'Temporary password (change after first login): '
+      'Temporary password (min 12 chars, upper + lower + number): '
     )
     return { email, fullName, password }
   } finally {
@@ -17,7 +17,7 @@ async function prompt() {
 }
 
 async function main() {
-  const { hashPassword } = await import('../lib/auth/password')
+  const { hashPassword, validatePasswordStrength } = await import('../lib/auth/password')
   const { db } = await import('../lib/db')
 
   const { rows } = await db.query(
@@ -33,6 +33,12 @@ async function main() {
 
   if (!email || !fullName || !password) {
     console.error('Email, full name, and password are required.')
+    return
+  }
+
+  const weak = validatePasswordStrength(password)
+  if (weak) {
+    console.error(weak)
     return
   }
 

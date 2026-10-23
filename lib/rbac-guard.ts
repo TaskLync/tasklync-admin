@@ -1,8 +1,9 @@
 // lib/rbac-guard.ts
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { verifyAccessToken } from '@/lib/auth/jwt'
+import { authenticateAccessToken } from '@/lib/auth/request'
 import { hasPermission } from '@/lib/auth/rbac'
+import { COOKIE } from '@/lib/auth/cookies'
 import type { AdminRole } from '@/types/auth'
 
 interface AdminContext {
@@ -18,17 +19,18 @@ type PermissionResult =
 
 export async function requirePermission(permission: string): Promise<PermissionResult> {
   const cookieStore = await cookies()
-  const token = cookieStore.get('admin_access')?.value
+  const payload = await authenticateAccessToken(cookieStore.get(COOKIE.access)?.value)
 
-  if (!token) {
+  if (!payload) {
     return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   }
 
-  let payload
-  try {
-    payload = await verifyAccessToken(token)
-  } catch {
-    return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  // A password-only session (MFA not enrolled yet) can never reach admin data.
+  if (payload.scope !== 'full') {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: 'MFA setup required', code: 'MFA_SETUP_REQUIRED' }, { status: 403 }),
+    }
   }
 
   if (!hasPermission(payload.role, permission)) {

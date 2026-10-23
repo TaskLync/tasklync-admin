@@ -19,6 +19,7 @@ TaskLync Admin provides tools for:
 * Handle disputes and reviews
 * Manage the TaskLync waitlist
 * View platform analytics
+
 * Manage services and categories
 * Manage admin accounts and settings
 

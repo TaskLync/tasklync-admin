@@ -1,24 +1,28 @@
 export const runtime = 'nodejs'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyAccessToken } from '@/lib/auth/jwt'
 import { db } from '@/lib/db'
+import { authenticateAccessToken } from '@/lib/auth/request'
+import { COOKIE } from '@/lib/auth/cookies'
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get('authorization')?.replace('Bearer ', '')
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const payload = await verifyAccessToken(auth).catch(() => null)
+  const payload = await authenticateAccessToken(req.cookies.get(COOKIE.access)?.value)
   if (!payload) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { rows } = await db.query(
-    'SELECT id, email, full_name, role, mfa_enabled FROM admin_users WHERE id = $1',
+    'SELECT id, email, full_name, role, mfa_enabled, is_active FROM admin_users WHERE id = $1',
     [payload.sub]
   )
-  if (!rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
   const a = rows[0]
+  if (!a || !a.is_active) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   return NextResponse.json({
-    id: a.id, email: a.email, fullName: a.full_name, role: a.role, mfaEnabled: a.mfa_enabled,
+    id: a.id,
+    email: a.email,
+    fullName: a.full_name,
+    role: a.role,
+    mfaEnabled: a.mfa_enabled,
+    isActive: a.is_active,
+    mfaSetupRequired: payload.scope === 'mfa_setup',
   })
 }

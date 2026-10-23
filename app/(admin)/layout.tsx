@@ -1,10 +1,12 @@
 // app/(admin)/layout.tsx
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
+import { SessionKeeper } from '@/components/auth/SessionKeeper'
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F8FA]">
+      <SessionKeeper />
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
