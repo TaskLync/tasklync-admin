@@ -13,6 +13,7 @@ types
 AGENTS.md
 CLAUDE.md
 eslint.config.mjs
+folderstructure.txt
 middleware.ts
 next-env.d.ts
 next.config.ts
@@ -22,8 +23,8 @@ postcss.config.mjs
 README.md
 service-account.example.json
 structure.txt
-structurefolder.txt
 tsconfig.json
+tsconfig.tsbuildinfo
 app\(admin)
 app\api
 app\auth
@@ -366,6 +367,7 @@ components\analytics\GrowthCharts.tsx
 components\auth\LoginForm.tsx
 components\auth\MfaForm.tsx
 components\auth\MfaSetupForm.tsx
+components\auth\SessionKeeper.tsx
 components\bookings\booking-ui.ts
 components\bookings\BookingActionDialogs.tsx
 components\bookings\BookingAdminActions.tsx
@@ -522,6 +524,7 @@ db\migrations\011_analytics.sql
 db\migrations\012_notifications_admin.sql
 db\migrations\013_live_map.sql
 db\migrations\014_reviews_admin.sql
+db\migrations\015_admin_session_hardening.sql
 generated-templates\push
 generated-templates\sms
 generated-templates\push\admin_custom_message.json
@@ -618,6 +621,7 @@ lib\store
 lib\analytics-api.ts
 lib\analytics-constants.ts
 lib\audit.ts
+lib\auth-fetch.ts
 lib\booking-constants.ts
 lib\bookings-api.ts
 lib\cn.ts
@@ -646,12 +650,19 @@ lib\swr-fetcher.ts
 lib\verification-api.ts
 lib\verification-constants.ts
 lib\workers-api.ts
+lib\auth\config.ts
 lib\auth\cookies.ts
+lib\auth\crypto.ts
+lib\auth\issue.ts
 lib\auth\jwt.ts
 lib\auth\mfa.ts
 lib\auth\password.ts
+lib\auth\rate-limit.ts
 lib\auth\rbac.ts
+lib\auth\redirect.ts
+lib\auth\request.ts
 lib\auth\session.ts
+lib\auth\trusted-device.ts
 lib\store\useSidebarStore.ts
 public\favicon.ico
 scripts\encode-firebase-credentials.ps1
