@@ -1,8 +1,10 @@
+// middleware.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAccessToken } from '@/lib/auth/jwt'
 import { permissionForPath, hasPermission } from '@/lib/auth/rbac'
 import { COOKIE } from '@/lib/auth/cookies'
 import { safeNextPath } from '@/lib/auth/redirect'
+import { hasInvalidIdSegment } from '@/lib/auth/uuid-guard'
 import type { AccessTokenPayload } from '@/types/auth'
 
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -42,7 +44,7 @@ export async function middleware(request: NextRequest) {
   let payload: AccessTokenPayload | null = null
   if (accessToken) {
     try {
-      payload = await verifyAccessToken(accessToken) // checks sig, alg, iss, aud, exp, type, scope
+      payload = await verifyAccessToken(accessToken) // sig, alg, iss, aud, exp, type, scope
     } catch {
       payload = null
     }
@@ -50,11 +52,8 @@ export async function middleware(request: NextRequest) {
 
   // ---- /auth/* pages --------------------------------------------------------
   if (pathname.startsWith('/auth')) {
-    if (payload?.scope === 'full') return redirect('/') // already signed in
-    if (payload?.scope === 'mfa_setup' && pathname !== '/auth/mfa-setup') {
-      return redirect('/auth/mfa-setup')
-    }
-    // Opening the login page with a live refresh cookie: sign straight back in.
+    if (payload?.scope === 'full') return redirect('/')
+    if (payload?.scope === 'mfa_setup' && pathname !== '/auth/mfa-setup') return redirect('/auth/mfa-setup')
     if (!payload && hasRefresh && pathname === '/auth/login' && !request.nextUrl.searchParams.has('reason')) {
       const next = safeNextPath(request.nextUrl.searchParams.get('next'))
       return redirect(`/api/admin/auth/refresh?next=${encodeURIComponent(next)}`)
@@ -64,29 +63,27 @@ export async function middleware(request: NextRequest) {
 
   // ---- protected pages + APIs ----------------------------------------------
   if (!payload) {
-    // API callers get JSON so the client can refresh + retry (see lib/auth-fetch.ts).
     if (isApi) return json(401, { error: 'Unauthorized' })
-
-    // Access cookie expired but the refresh cookie is alive: renew silently, come back here.
     if (hasRefresh) {
       return redirect(`/api/admin/auth/refresh?next=${encodeURIComponent(pathname + search)}`)
     }
-
     const url = new URL('/auth/login', request.url)
     if (pathname !== '/') url.searchParams.set('next', pathname + search)
     return NextResponse.redirect(url)
   }
 
-  // Password-only session: nothing but MFA enrolment.
   if (payload.scope !== 'full') {
     return isApi
       ? json(403, { error: 'MFA setup required', code: 'MFA_SETUP_REQUIRED' })
       : redirect('/auth/mfa-setup')
   }
 
+  // A malformed id is a 404, not a SQL error (audit M-22).
+  if (isApi && hasInvalidIdSegment(pathname)) return json(404, { error: 'Not found' })
+
   const requiredPermission = permissionForPath(pathname)
   if (requiredPermission && !hasPermission(payload.role, requiredPermission)) {
-    return redirect('/') // bounce to dashboard, not an error page
+    return isApi ? json(403, { error: 'Forbidden' }) : redirect('/')
   }
 
   return NextResponse.next()

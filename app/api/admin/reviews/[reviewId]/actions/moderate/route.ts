@@ -1,24 +1,16 @@
 // app/api/admin/reviews/[reviewId]/actions/moderate/route.ts
-// hide    -> ADMIN_HIDDEN   (spec: "Remove Review, with reason")
-// restore -> ADMIN_RESTORED
-// dismiss -> "Keep Review": resolves open reports; an AUTO_HIDDEN review is restored.
+// hide -> ADMIN_HIDDEN | restore -> ADMIN_RESTORED | dismiss -> "keep review"
+// review-service does the change and emits review.moderated (ratings + search update).
 import { NextRequest, NextResponse } from 'next/server'
+import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import {
-  MODERATION_ACTIONS,
-  NOTE_MAX_LENGTH,
-  resultingStatus,
-  type ModerationAction,
+  MODERATION_ACTIONS, NOTE_MAX_LENGTH, resultingStatus, type ModerationAction,
 } from '@/lib/review-constants'
-import {
-  ReviewActionError,
-  invalidateReviewCache,
-  isUuid,
-  reviewErrorResponse,
-  reviewNotFound,
-  withTx,
-} from '@/lib/reviews-api'
+import { isUuid, reviewNotFound } from '@/lib/reviews-api'
+import { reviewSvc } from '@/lib/services/review'
+import { serviceErrorResponse } from '@/lib/internal-client'
 
 const AUDIT_ACTION: Record<ModerationAction, string> = {
   hide: 'review.hidden',
@@ -49,85 +41,53 @@ export async function POST(
   if (!(MODERATION_ACTIONS as readonly string[]).includes(action)) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
   }
-  if (!note) {
-    return NextResponse.json({ error: 'A reason is required' }, { status: 400 })
-  }
+  if (!note) return NextResponse.json({ error: 'A reason is required' }, { status: 400 })
   if (note.length > NOTE_MAX_LENGTH) {
     return NextResponse.json({ error: 'Reason is too long (max 1000 characters)' }, { status: 400 })
   }
 
-  const adminId = guard.admin.adminId
-  const adminEmail = guard.admin.adminEmail
+  const admin = { id: guard.admin.adminId, email: guard.admin.adminEmail }
 
   try {
-    const result = await withTx(async (client) => {
-      // Lock the row so a concurrent review-service auto-hide can't interleave.
-      const { rows } = await client.query(
-        `SELECT worker_id, moderation_status::text AS status
-         FROM reviews WHERE id = $1 FOR UPDATE`,
-        [reviewId]
-      )
-      if (rows.length === 0) throw new ReviewActionError(404, 'Review not found')
+    const cur = await db.query(
+      `SELECT moderation_status::text AS status,
+              (SELECT count(*) FROM review_reports rr WHERE rr.review_id = r.id AND rr.resolved_at IS NULL)::int AS open_reports
+         FROM reviews r WHERE r.id = $1`,
+      [reviewId]
+    )
+    if (cur.rows.length === 0) return reviewNotFound()
+    const current = cur.rows[0].status as string
 
-      const current = rows[0].status as string
-      const next = resultingStatus(action, current)
-      if (!next) throw new ReviewActionError(409, BLOCKED_MESSAGE[action])
+    const next = resultingStatus(action, current)
+    if (!next) return NextResponse.json({ error: BLOCKED_MESSAGE[action] }, { status: 409 })
+    if (next === current && cur.rows[0].open_reports === 0) {
+      return NextResponse.json({ error: 'There are no open reports on this review.' }, { status: 409 })
+    }
 
-      const changed = next !== current
-      if (changed) {
-        await client.query(
-          `UPDATE reviews
-           SET moderation_status = $2::moderation_status,
-               moderated_by = $3,
-               moderated_at = now(),
-               moderation_note = $4,
-               updated_at = now()
-           WHERE id = $1`,
-          [reviewId, next, adminId, note]
-        )
-      }
+    await reviewSvc.moderate(reviewId, admin, { action, note })
 
-      const resolved = await client.query(
-        `UPDATE review_reports
-         SET resolved_at = now(), resolved_by = $2
-         WHERE review_id = $1 AND resolved_at IS NULL`,
-        [reviewId, adminId]
-      )
-
-      if (!changed && (resolved.rowCount ?? 0) === 0) {
-        throw new ReviewActionError(409, 'There are no open reports on this review.')
-      }
-
-      return {
-        workerId: rows[0].worker_id as string | null,
-        previous: current,
-        next,
-        changed,
-        resolvedReports: resolved.rowCount ?? 0,
-      }
-    })
-
-    if (result.changed) await invalidateReviewCache(reviewId, result.workerId)
+    // Make sure the Flagged queue clears even if review-service does not touch the admin columns.
+    const resolved = await db.query(
+      `UPDATE review_reports SET resolved_at = now(), resolved_by = $2
+        WHERE review_id = $1 AND resolved_at IS NULL`,
+      [reviewId, admin.id]
+    )
 
     await logAdminAction({
-      adminId,
-      adminEmail,
+      adminId: admin.id,
+      adminEmail: admin.email,
       action: AUDIT_ACTION[action],
       resourceType: 'review',
       resourceId: reviewId,
-      oldValue: { moderationStatus: result.previous },
-      newValue: { moderationStatus: result.next, resolvedReports: result.resolvedReports },
+      oldValue: { moderationStatus: current },
+      newValue: { moderationStatus: next, resolvedReports: resolved.rowCount ?? 0 },
       notes: note,
       ip: getClientIp(req),
       userAgent: req.headers.get('user-agent') ?? undefined,
     })
 
-    return NextResponse.json({
-      ok: true,
-      moderationStatus: result.next,
-      resolvedReports: result.resolvedReports,
-    })
+    return NextResponse.json({ ok: true, moderationStatus: next, resolvedReports: resolved.rowCount ?? 0 })
   } catch (err) {
-    return reviewErrorResponse(err, '[POST review moderate]')
+    return serviceErrorResponse(err, '[POST review moderate]')
   }
 }

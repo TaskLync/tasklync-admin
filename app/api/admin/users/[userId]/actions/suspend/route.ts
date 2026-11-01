@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
+import { clearUserCaches } from '@/lib/cache'
 
 const DURATIONS: Record<string, number> = {
   '7d': 7,
@@ -58,6 +59,8 @@ export async function POST(
   if (rows.length === 0) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
+
+  await clearUserCaches(userId)
 
   await logAdminAction({
     adminId: guard.admin.adminId,

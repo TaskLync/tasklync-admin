@@ -1,9 +1,12 @@
 // app/api/admin/workers/[workerId]/actions/unsuspend/route.ts
+// Lifts a suspension only; a banned worker stays banned (worker-service enforces it).
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { isUuid, workerNotFound } from '@/lib/workers-api'
+import { workerSvc } from '@/lib/services/worker'
+import { searchSvc } from '@/lib/services/search'
+import { serviceErrorResponse } from '@/lib/internal-client'
 
 export async function POST(
   req: NextRequest,
@@ -15,35 +18,23 @@ export async function POST(
   const { workerId } = await params
   if (!isUuid(workerId)) return workerNotFound()
 
-  // Only lifts a suspension; a banned worker stays banned.
-  const { rows } = await db.query(
-    `UPDATE workers
-     SET suspended_until = NULL, suspended_reason = NULL, suspended_by = NULL,
-         is_active = true, updated_at = now()
-     WHERE id = $1
-       AND deleted_at IS NULL
-       AND banned_at IS NULL
-       AND suspended_until IS NOT NULL
-     RETURNING id`,
-    [workerId]
-  )
+  const admin = { id: guard.admin.adminId, email: guard.admin.adminEmail }
 
-  if (rows.length === 0) {
-    return NextResponse.json(
-      { error: 'Worker not found, banned, or not currently suspended' },
-      { status: 409 }
-    )
+  try {
+    await workerSvc.moderate(workerId, admin, { action: 'unsuspend', reason: 'Suspension lifted by admin' })
+    void searchSvc.reindexWorker(workerId)
+
+    await logAdminAction({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'worker.unsuspended',
+      resourceType: 'worker',
+      resourceId: workerId,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    return serviceErrorResponse(err, '[POST worker unsuspend]')
   }
-
-  await logAdminAction({
-    adminId: guard.admin.adminId,
-    adminEmail: guard.admin.adminEmail,
-    action: 'worker.unsuspended',
-    resourceType: 'worker',
-    resourceId: workerId,
-    ip: getClientIp(req),
-    userAgent: req.headers.get('user-agent') ?? undefined,
-  })
-
-  return NextResponse.json({ ok: true })
 }

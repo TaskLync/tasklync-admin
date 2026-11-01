@@ -15,6 +15,7 @@ import {
   Map,
   Tags,
   Settings,
+  UserCog,
 } from 'lucide-react'
 import type { AdminRole } from '@/lib/auth/rbac'
 
@@ -48,7 +49,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Workers',
     href: '/workers',
     icon: Wrench,
-    allowedRoles: ['SUPER_ADMIN', 'OPS'],
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
   },
   {
     label: 'Bookings',
@@ -108,6 +109,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Settings',
     href: '/settings',
     icon: Settings,
+    allowedRoles: ['SUPER_ADMIN'],
+  },
+  {
+    label: 'Admin users',
+    href: '/settings/admins',
+    icon: UserCog,
     allowedRoles: ['SUPER_ADMIN'],
   },
 ]

@@ -149,9 +149,17 @@ function DocumentCard({
 interface Props {
   documents: WorkerDocumentRow[]
   avatarUrl: string | null
+  /** true when the document list could not be loaded server-side */
+  documentsUnavailable?: boolean
+  onRetry?: () => void
 }
 
-export default function VerificationDocuments({ documents, avatarUrl }: Props) {
+export default function VerificationDocuments({
+  documents,
+  avatarUrl,
+  documentsUnavailable = false,
+  onRetry,
+}: Props) {
   const [viewing, setViewing] = useState<ViewItem | null>(null)
 
   // Number repeated types so two NATIONAL_ID uploads read "CNIC image 1 / 2"
@@ -169,6 +177,21 @@ export default function VerificationDocuments({ documents, avatarUrl }: Props) {
       <p className="mb-3 text-xs text-gray-500">
         Compare the face on the CNIC with the profile photo. Click an image to zoom.
       </p>
+
+      {documentsUnavailable && (
+        <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <span>Documents could not be loaded, retry</span>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="font-medium underline hover:no-underline"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {avatarUrl && (
@@ -197,7 +220,7 @@ export default function VerificationDocuments({ documents, avatarUrl }: Props) {
         })}
       </div>
 
-      {documents.length === 0 && !avatarUrl && (
+      {documents.length === 0 && !avatarUrl && !documentsUnavailable && (
         <p className="text-sm text-gray-500">No documents uploaded.</p>
       )}
 

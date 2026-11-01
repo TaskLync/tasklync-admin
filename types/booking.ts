@@ -221,6 +221,17 @@ export interface BookingLocationData {
   /** false when the GPS history table is not reachable */
   trailAvailable: boolean
   trail: TrailPoint[]
+  proof?: {
+    arrivedAt: string | null
+    arrivalDistanceMeters: number | null
+    startMethod: string | null
+    startDistanceMeters: number | null
+    startGpsAccuracyMeters: number | null
+    completionDistanceMeters: number | null
+    cashCollectedAmount: number | null
+    estimatedTotal: number | null
+    completionPhotoUrls: string[]
+  }
 }
 
 export interface BookingNote {

@@ -1,9 +1,9 @@
-
 // app/api/admin/users/[userId]/actions/edit-contact/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
+import { clearUserCaches } from '@/lib/cache'
 
 export async function PATCH(
   req: NextRequest,
@@ -66,6 +66,8 @@ export async function PATCH(
     }
     throw err
   }
+
+  await clearUserCaches(userId)
 
   await logAdminAction({
     adminId: guard.admin.adminId,

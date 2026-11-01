@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
+import { workerSvc } from '@/lib/services/worker'
 
 const SORT_COLUMNS: Record<string, string> = {
   sort_order: 'c.sort_order',
@@ -114,6 +115,8 @@ export async function POST(req: NextRequest) {
        RETURNING id, name, name_ur, icon_url, parent_id, is_active, sort_order, created_at`,
       [id, name, body.nameUr ?? null, body.iconUrl ?? null, body.parentId ?? null, body.sortOrder ?? 0]
     )
+
+    await workerSvc.invalidateCatalogCache() // worker-service caches category:list for 1 hour
 
     await logAdminAction({
       adminId: guard.admin.adminId,

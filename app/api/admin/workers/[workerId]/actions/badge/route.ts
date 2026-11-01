@@ -4,6 +4,8 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { isUuid, workerNotFound } from '@/lib/workers-api'
+import { workerSvc } from '@/lib/services/worker'
+import { searchSvc } from '@/lib/services/search'
 
 const BADGES = ['top_rated', 'background_verified']
 
@@ -46,6 +48,9 @@ export async function POST(
     if (err?.code === '23503') return workerNotFound() // foreign key: no such worker
     throw err
   }
+
+  await workerSvc.invalidateWorkerCache(workerId)
+  await searchSvc.reindexWorker(workerId)
 
   await logAdminAction({
     adminId: guard.admin.adminId,

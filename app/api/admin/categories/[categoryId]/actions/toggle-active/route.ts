@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
+import { workerSvc } from '@/lib/services/worker'
 
 export async function POST(
   req: NextRequest,
@@ -21,6 +22,8 @@ export async function POST(
   if (rows.length === 0) {
     return NextResponse.json({ error: 'Category not found' }, { status: 404 })
   }
+
+  await workerSvc.invalidateCatalogCache() // worker-service caches category:list for 1 hour
 
   await logAdminAction({
     adminId: guard.admin.adminId,

@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { STATUS_SQL, isUuid, workerNotFound } from '@/lib/workers-api'
 import { CNIC_DUPLICATES_SQL } from '@/lib/verification-api'
+import { workerSvc, mapSignedDocuments } from '@/lib/services/worker'
 
 export async function GET(
   req: NextRequest,
@@ -43,14 +44,14 @@ export async function GET(
     const w = rows[0]
 
     const [docsRes, skillsRes, dupRes, reviewsRes, activityRes] = await Promise.all([
-      db.query(
-        `SELECT id, type::text AS type, file_url, status::text AS status,
-                rejection_note, reviewed_at, created_at
-         FROM worker_documents
-         WHERE worker_id = $1
-         ORDER BY created_at ASC`,
-        [workerId]
-      ),
+      // signed URLs only; the raw file_url never leaves the server (audit H-03)
+      workerSvc
+        .verificationSummary(workerId)
+        .then(mapSignedDocuments)
+        .catch((err) => {
+          console.error('[verification] could not load signed documents', err)
+          return null
+        }),
       db.query(
         `SELECT s.id, s.category_id, c.name AS category_name, s.years_exp, s.is_verified
          FROM worker_skills s
@@ -106,15 +107,8 @@ export async function GET(
         resubmissionAllowed: w.verification_resubmission_allowed,
         reverificationReason: w.reverification_reason,
       },
-      documents: docsRes.rows.map((r) => ({
-        id: r.id,
-        type: r.type,
-        fileUrl: r.file_url,
-        status: r.status,
-        rejectionNote: r.rejection_note,
-        reviewedAt: r.reviewed_at,
-        createdAt: r.created_at,
-      })),
+      documents: docsRes ?? [],
+      documentsUnavailable: docsRes === null,
       skills: skillsRes.rows.map((r) => ({
         id: r.id,
         categoryId: r.category_id,

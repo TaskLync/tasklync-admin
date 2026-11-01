@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 
 const BOOKING_BUCKETS: Record<string, string> = {
   '0': 'u.total_bookings = 0',
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
   }
   if (dateTo) {
     params.push(dateTo)
-    where.push(`u.created_at <= $${i}`)
+    where.push(`u.created_at < ($${i}::date + 1)`)
     i++
   }
 
@@ -97,7 +98,17 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    return new NextResponse(lines.join('\n'), {
+    await logAdminAction({
+      adminId: guard.admin.adminId,
+      adminEmail: guard.admin.adminEmail,
+      action: 'users.exported',
+      resourceType: 'users',
+      notes: `${result.rows.length} rows, filters: ${req.nextUrl.searchParams.toString().slice(0, 300)}`,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
+
+    return new NextResponse('\uFEFF' + lines.join('\n'), {
       status: 200,
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',

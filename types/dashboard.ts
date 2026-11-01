@@ -51,6 +51,7 @@ export interface NeedsAttention {
   failedPayments: AttentionFailedPayment[]
   stuckPendingBookings: AttentionStuckBooking[]
   flaggedReviews: AttentionFlaggedReview[]
+  stuckInProgress?: { id: string; workerId: string; hoursOverdue: number }[]
 }
 
 export type PlatformEventType =

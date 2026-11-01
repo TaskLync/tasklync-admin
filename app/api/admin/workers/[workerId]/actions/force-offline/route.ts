@@ -1,11 +1,11 @@
 // app/api/admin/workers/[workerId]/actions/force-offline/route.ts
-// Back-dates last_seen_at AND sets manually_paused. Back-dating alone would be undone
-// by the app's next 60-second heartbeat.
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { isUuid, workerNotFound } from '@/lib/workers-api'
+import { workerSvc } from '@/lib/services/worker'
+import { searchSvc } from '@/lib/services/search'
+import { serviceErrorResponse } from '@/lib/internal-client'
 
 export async function POST(
   req: NextRequest,
@@ -19,32 +19,33 @@ export async function POST(
 
   const body = await req.json().catch(() => ({}))
   const reason: string = body.reason?.trim()
-  if (!reason) {
-    return NextResponse.json({ error: 'A reason is required' }, { status: 400 })
+  if (!reason) return NextResponse.json({ error: 'A reason is required' }, { status: 400 })
+
+  const minutes = Math.min(1440, Math.max(5, Number(process.env.FORCE_OFFLINE_MINUTES) || 60))
+  const until = new Date(Date.now() + minutes * 60_000)
+  const admin = { id: guard.admin.adminId, email: guard.admin.adminEmail }
+
+  try {
+    await workerSvc.moderate(workerId, admin, {
+      action: 'suspend',
+      reason: `Forced offline: ${reason}`,
+      until: until.toISOString(),
+    })
+    void searchSvc.reindexWorker(workerId)
+
+    await logAdminAction({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'worker.forced_offline',
+      resourceType: 'worker',
+      resourceId: workerId,
+      newValue: { until: until.toISOString(), minutes, reason },
+      notes: reason,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
+    return NextResponse.json({ ok: true, until: until.toISOString() })
+  } catch (err) {
+    return serviceErrorResponse(err, '[POST worker force-offline]')
   }
-
-  const { rows } = await db.query(
-    `UPDATE workers
-     SET manually_paused = true,
-         last_seen_at = now() - interval '1 hour',
-         updated_at = now()
-     WHERE id = $1 AND deleted_at IS NULL
-     RETURNING id`,
-    [workerId]
-  )
-  if (rows.length === 0) return workerNotFound()
-
-  await logAdminAction({
-    adminId: guard.admin.adminId,
-    adminEmail: guard.admin.adminEmail,
-    action: 'worker.forced_offline',
-    resourceType: 'worker',
-    resourceId: workerId,
-    newValue: { manuallyPaused: true, reason },
-    notes: reason,
-    ip: getClientIp(req),
-    userAgent: req.headers.get('user-agent') ?? undefined,
-  })
-
-  return NextResponse.json({ ok: true })
 }

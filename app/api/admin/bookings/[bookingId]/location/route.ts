@@ -5,16 +5,7 @@ import { requirePermission } from '@/lib/rbac-guard'
 import { isUuid } from '@/lib/workers-api'
 import { bookingNotFound } from '@/lib/bookings-api'
 
-// ⚠️ ASSUMPTION: adjust table / column names to worker-service's real GPS history table.
-const TRAIL_SQL = `
-  SELECT ST_Y(l.location::geometry) AS lat,
-         ST_X(l.location::geometry) AS lng,
-         l.recorded_at
-  FROM worker_location_history l
-  WHERE l.worker_id = $1 AND l.recorded_at >= $2 AND l.recorded_at <= $3
-  ORDER BY l.recorded_at ASC
-  LIMIT 500
-`
+const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
 
 export async function GET(
   req: NextRequest,
@@ -28,35 +19,33 @@ export async function GET(
 
   try {
     const { rows } = await db.query(
-      `SELECT worker_id, scheduled_at, completed_at,
-              ST_Y(job_site_location::geometry) AS lat,
-              ST_X(job_site_location::geometry) AS lng
+      `SELECT ST_Y(job_site_location::geometry) AS lat, ST_X(job_site_location::geometry) AS lng,
+              arrived_at, arrival_distance_meters, start_method, start_distance_meters,
+              start_gps_accuracy_meters, completion_distance_meters,
+              cash_collected_amount, estimated_total, completion_photo_urls
        FROM bookings WHERE id = $1`,
       [bookingId]
     )
     if (rows.length === 0) return bookingNotFound()
     const b = rows[0]
 
-    const jobSite =
-      b.lat !== null && b.lng !== null ? { lat: Number(b.lat), lng: Number(b.lng) } : null
-
-    let trailAvailable = true
-    let trail: { lat: number; lng: number; recordedAt: string }[] = []
-    try {
-      const from = new Date(new Date(b.scheduled_at).getTime() - 60 * 60 * 1000)
-      const to = b.completed_at ? new Date(b.completed_at) : new Date()
-      const trailRes = await db.query(TRAIL_SQL, [b.worker_id, from, to])
-      trail = trailRes.rows.map((r) => ({
-        lat: Number(r.lat),
-        lng: Number(r.lng),
-        recordedAt: r.recorded_at,
-      }))
-    } catch (err: any) {
-      if (err?.code !== '42P01' && err?.code !== '42703') throw err
-      trailAvailable = false
-    }
-
-    return NextResponse.json({ jobSite, trailAvailable, trail })
+    return NextResponse.json({
+      jobSite: b.lat !== null && b.lng !== null ? { lat: Number(b.lat), lng: Number(b.lng) } : null,
+      // The worker-service keeps ONE live position per worker, no history. The proof below is what booking-service stored.
+      trailAvailable: false,
+      trail: [],
+      proof: {
+        arrivedAt: b.arrived_at,
+        arrivalDistanceMeters: num(b.arrival_distance_meters),
+        startMethod: b.start_method,
+        startDistanceMeters: num(b.start_distance_meters),
+        startGpsAccuracyMeters: num(b.start_gps_accuracy_meters),
+        completionDistanceMeters: num(b.completion_distance_meters),
+        cashCollectedAmount: num(b.cash_collected_amount),
+        estimatedTotal: num(b.estimated_total),
+        completionPhotoUrls: b.completion_photo_urls ?? [],
+      },
+    })
   } catch (err) {
     console.error('[GET booking location]', err)
     return NextResponse.json({ error: 'Failed to load location data' }, { status: 500 })

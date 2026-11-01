@@ -114,6 +114,7 @@ export interface VerificationActivity {
 export interface VerificationDetail {
   worker: VerificationWorker
   documents: WorkerDocumentRow[]
+  documentsUnavailable?: boolean
   skills: WorkerSkillRow[]
   cnicDuplicates: CnicDuplicate[]
   reviews: VerificationReview[]

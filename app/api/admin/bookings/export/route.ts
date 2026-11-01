@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { FROM_SQL, LIST_COLUMNS_SQL, buildBookingWhere, toWhereSql } from '@/lib/bookings-api'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 
 const MAX_ROWS = 20_000
 
@@ -59,6 +60,16 @@ export async function GET(req: NextRequest) {
         ].join(',')
       )
     }
+
+    await logAdminAction({
+      adminId: guard.admin.adminId,
+      adminEmail: guard.admin.adminEmail,
+      action: 'bookings.exported',
+      resourceType: 'bookings',
+      notes: `${result.rows.length} rows, filters: ${req.nextUrl.searchParams.toString().slice(0, 300)}`,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
 
     // BOM so Excel opens UTF-8 names correctly
     return new NextResponse('\uFEFF' + lines.join('\n'), {

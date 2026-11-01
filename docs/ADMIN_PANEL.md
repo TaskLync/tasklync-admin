@@ -1,13 +1,13 @@
 # TaskLync: Admin Panel
-### Internal Engineering Documentation · v1.0.0
+### Internal Engineering Documentation · v1.1.0
 > **Classification:** Internal · Engineering Team Only
 > **Owner:** Backend Platform Team
 > **Last Updated:** October 2026
-> **Status:** 🟡 In Development
-> **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3000`
+> **Status:** 🟡 In Development (round 2 audit fixes applied)
+> **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3100`
 > **Repo location of this file:** `docs/ADMIN_PANEL.md`
 
-This is the first full document for the admin panel. It was written from the real code (folder structure, 15 migrations, `lib/`, `types/`, `hooks/`, all 121 API route handlers). Domain UI components (about 150 files in `components/<module>`) were not read line by line; their behaviour is described through the hooks, types and routes they call. Section 21 lists everything that does not match the other service docs. **Read section 21 before the first production deploy.**
+This document replaces v1.0.0. What changed is listed in section 22.
 
 ---
 
@@ -40,71 +40,67 @@ This is the first full document for the admin panel. It was written from the rea
 
 ## 1. Service Overview
 
-### What is this?
+The **Admin Panel** is the internal operations dashboard of TaskLync: moderation of users and workers, KYC verification, booking operations, disputes, finance views, reviews moderation, broadcast notifications, live map, analytics, catalog, pricing and admin-user management.
 
-The **Admin Panel** is the internal operations dashboard of TaskLync. It is the only web UI for the team: moderation of users and workers, KYC verification, booking operations, disputes, finance views, reviews moderation, broadcast notifications, live map, analytics, catalog and pricing.
-
-It is **not a microservice in the Express sense**. It is one Next.js (App Router) application that contains the UI and a BFF layer (`app/api/admin/*`). It talks to the **shared PostgreSQL (Supabase) database directly through `pg`** and to Redis. It has its own authentication, separate from auth-service.
+It is **one Next.js (App Router) application** with a UI and a BFF layer (`app/api/admin/*`). It has its own authentication, separate from auth-service. It **reads** the shared PostgreSQL (Supabase) database with `pg`, and since v1.1.0 it **changes other services' data only by calling their internal APIs**, with a few documented exceptions (section 9).
 
 ### Stack
 
 | Layer | Technology |
 |---|---|
 | Framework | Next.js `16.2.10` (App Router), React `19.2.4`, TypeScript 5 |
-| Styling | Tailwind CSS 4 (`@theme inline` tokens in `globals.css`), `lucide-react` icons |
-| Data fetching | SWR (`swr`), plain `fetch`; `@tanstack/react-query` and `axios` are installed but unused in the files reviewed |
-| Client state | `zustand` (sidebar collapse, persisted) |
-| DB | `pg` pool, raw SQL, no ORM |
-| Cache / sessions | `ioredis` |
-| Auth | `jose` (HS256 JWT), `bcryptjs`, `otplib` (TOTP), `qrcode` |
-| Validation | `zod` on the auth routes, hand-written checks elsewhere |
-| Maps | `mapbox-gl` |
-| Charts | `recharts` |
-| Push | `firebase-admin` (FCM v1, direct from the admin server) |
-| Hosting | Vercel (per README); also runs behind nginx/Cloudflare per comments in `lib/audit.ts` |
+| Styling | Tailwind CSS 4 (`@theme inline` tokens), `lucide-react` |
+| Data fetching | SWR, plain `fetch` |
+| Client state | `zustand` (sidebar) |
+| DB | `pg` pool, raw SQL, no ORM, verified TLS when `DATABASE_CA_CERT` is set |
+| Cache / sessions | `ioredis` (must be the shared Redis) |
+| Auth | `jose` (HS256 JWT), `bcryptjs`, `otplib`, `qrcode` |
+| Validation | `zod` on auth routes, hand-written checks elsewhere |
+| Maps / charts | `mapbox-gl`, `recharts` |
+| Tests | `vitest` |
+| Hosting | Vercel or any Node host behind a proxy that overwrites `x-real-ip` |
 
-> **AGENTS.md warning:** this Next.js version has breaking changes compared with older versions. Read `node_modules/next/dist/docs/` before changing routing, middleware or caching code. Next 16 renames the `middleware` file convention to `proxy`; this repo still uses `middleware.ts`. Verify against the installed version before upgrading.
+> **AGENTS.md warning:** this Next.js version has breaking changes. Read `node_modules/next/dist/docs/` before changing routing, middleware or caching. Next 16 renames the `middleware` convention to `proxy`; this repo still uses `middleware.ts`. Verify against the installed version before upgrading.
 
 ### What this service does NOT do
 
-- Customer or worker login: auth-service. Admins never get tokens that other services accept, and auth-service never issues an admin role (auth-service ADR-010).
-- Booking, payment, review, notification **business logic**: those stay in their services. The admin panel mostly reads their tables and, for a few actions, writes their tables directly (see section 9; this is the main architectural risk).
-- Customer / worker apps and the public website.
+- Customer or worker login (auth-service).
+- Booking, payment, review, notification **business logic**. It calls those services.
+- Firebase push. notification-service sends all push and SMS (the panel no longer holds a Firebase key).
+- Impersonation (removed in v1.1.0).
 
 ### Service boundaries
 
 ```
 OWNS (writes, created by admin migrations):
   ├── admin_users, admin_mfa_backup_codes, admin_trusted_devices, admin_audit_log
-  ├── admin_event_outbox                       (transactional outbox, relay NOT built yet)
-  ├── platform_events                          (dashboard activity feed, filled by DB triggers)
-  ├── platform_pricing_config                  (singleton)
-  ├── booking_status_history, booking_admin_notes
-  ├── dispute_admin_notes, review_admin_notes
-  ├── worker_badges, worker_verification_reviews
-  └── search_demand_log                        (table is ours, search-service must write to it)
+  ├── platform_events, platform_pricing_config (singleton)
+  ├── booking_status_history, booking_admin_notes, dispute_admin_notes, review_admin_notes
+  ├── admin_migrations (migration tracking)
+  ├── admin_event_outbox   DEPRECATED, nothing writes it any more
+  └── search_demand_log    (table is ours; search-service may write to it, the map falls back to bookings otherwise)
 
-ADDS COLUMNS to tables owned by other services (additive, IF NOT EXISTS):
-  ├── users      suspension / ban / warning columns                       (004)
-  ├── workers    suspension / ban / warning / featured / KYC columns      (006, 007)
-  ├── bookings   refund_amount, refund_percentage                         (008)
-  ├── disputes   assigned_* / is_escalated / escalation_*                 (010)
-  └── reviews, review_reports   moderation + resolution columns           (014)
+ADDS COLUMNS to tables owned by others (additive, IF NOT EXISTS): users, workers, bookings, disputes, reviews, review_reports  (section 4.3)
 
-WRITES DIRECTLY to tables owned by others (see section 9):
-  users, workers, worker_documents, bookings, disputes, reviews, review_reports,
-  categories, services, waitlist, broadcast_campaigns, notifications, notification_deliveries
+CALLS (server side, X-Internal-Key):
+  ├── booking-service   /internal/admin/*   cancel, override-status, reassign, escalate, dispute resolve
+  ├── worker-service    /internal/admin/*   verify, reject, moderation, signed verification summary; /internal/cache/invalidate
+  ├── review-service    PATCH /internal/reviews/:id/moderate
+  ├── search-service    POST /internal/reindex/:workerId
+  ├── payment-service   POST /internal/refunds, POST /internal/payouts/:id/retry
+  └── API gateway       POST /internal-admin/notifications/broadcasts  (x-admin-internal-key)
 
-READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages,
-       worker_locations, user_addresses, user_blocks, worker_skills, worker_service_offerings,
-       worker_recurring_availability, worker_blocked_dates, reviewable_bookings,
-       notification_preferences
+WRITES DIRECTLY (admin-owned columns or no owner API yet):
+  ├── users: warn / suspend / unsuspend / ban / contact edit  (+ clears user caches in Redis)
+  ├── workers: warn, featured flag, edit contact, re-verification request, CNIC number  (+ cache invalidate + search reindex)
+  ├── worker_badges (shared table, admin writes `top_rated` and `background_verified`)
+  ├── categories, services (+ worker-service cache invalidate)
+  ├── disputes: assignment / escalation columns, review_reports resolution columns
+  └── waitlist status
 
-CALLS via HTTP (server side only):
-  └── payment-service  POST /internal/refunds, POST /internal/payouts/:id/retry   (x-internal-key)
-
-SENDS directly:
-  └── Firebase Cloud Messaging (FCM v1) for broadcast and test pushes
+READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages, worker_locations, user_addresses,
+       user_blocks, worker_skills, worker_service_offerings, worker_recurring_availability, worker_blocked_dates,
+       reviewable_bookings, notification_preferences, booking_penalties, bookings, disputes, reviews
 ```
 
 ### Key numbers
@@ -112,95 +108,82 @@ SENDS directly:
 | Metric | Value |
 |---|---|
 | Admin roles | 4: `SUPER_ADMIN`, `OPS`, `FINANCE`, `SUPPORT` |
-| Permissions | 48 (section 6) |
-| Admin pages | 13 modules + 3 auth pages |
-| API route handlers | 121 |
-| Migrations | 15 (`db/migrations/001` to `015`) |
-| Access token TTL | 15 min (`ADMIN_ACCESS_TOKEN_TTL=900`) |
-| Session life | 8 h (not remembered) or 7 d (remembered device), absolute, never extended by refresh |
+| Permissions | 47 (impersonation removed) |
+| Admin pages | 14 modules + 3 auth pages |
+| API route handlers | 126 |
+| Migrations | 16 (`db/migrations/001` to `016`) |
+| Access token TTL | 15 min |
+| Session life | 8 h or 7 d (remembered device), absolute |
 | Concurrent sessions per admin | 3 |
 | Failed logins before lockout | 5, lockout 30 min |
-| MFA | mandatory for every role by default (`ADMIN_MFA_REQUIRED=true`) |
-| DB pool | max 10 connections |
-| Max super admins via seed script | 2 |
-| Page auto-refresh | 5 s (live map workers) to 60 s (analytics, finance) |
-| Day boundary for all KPIs | Asia/Karachi |
+| MFA | mandatory for every role by default |
+| DB pool | max 10 |
+| Super admins | max 2 |
+| Dev port | **3100** (3000 is the API gateway) |
+| Day boundary for all KPIs and money | Asia/Karachi, completion time for revenue |
 
 ---
 
 ## 2. Architecture
 
-### System context
-
 ```
                     ┌──────────────────────┐
                     │  Admin (browser)     │
-                    │ admin.tasklync.pk    │
                     └──────────┬───────────┘
-                               │ HTTPS  (httpOnly cookies, SameSite=Lax)
+                               │ HTTPS (httpOnly cookies, SameSite=Lax)
                     ┌──────────▼───────────┐
-                    │  Next.js middleware  │  JWT verify (edge), Origin/CSRF check,
-                    │                      │  route → permission check, silent refresh redirect
+                    │  Next.js middleware  │  JWT verify, Origin/CSRF, UUID id guard,
+                    │                      │  route → permission, silent refresh redirect
                     └──────────┬───────────┘
-                               │
         ┌──────────────────────▼──────────────────────┐
         │              tasklync-admin (Node)          │
         │  app/(admin) pages  ·  app/api/admin/* BFF  │
-        └──┬─────────────┬─────────────┬──────────────┘
-           │             │             │ HTTP (x-internal-key)     │ HTTPS
-           ▼             ▼             ▼                           ▼
-    ┌────────────┐ ┌───────────┐ ┌──────────────────┐     ┌────────────────┐
-    │ PostgreSQL │ │   Redis   │ │ payment-service  │     │ Firebase (FCM) │
-    │ (shared)   │ │ sessions, │ │ refunds, payout  │     │ direct push    │
-    │ pg pool    │ │ rate lim. │ │ retry            │     └────────────────┘
-    └────────────┘ └───────────┘ └──────────────────┘
-          ▲
-          │ written by the other 8 services; read and partly written here
+        └─┬──────────┬─────────────┬──────────────────┘
+          │ SQL      │ Redis       │ HTTP + X-Internal-Key
+          ▼          ▼             ▼
+    PostgreSQL     Redis     booking · worker · review · search · payment · gateway→notification
 ```
 
 ### Request pipeline
 
 ```
-Browser request
-  ▼
-middleware.ts  (edge runtime)
-  ├─ unsafe API method (POST/PUT/PATCH/DELETE) and Origin ≠ Host   → 403
-  ├─ /api/admin/auth/*                                             → pass (routes enforce themselves)
+Browser request → middleware.ts (edge)
+  ├─ unsafe API method and Origin ≠ Host                         → 403
+  ├─ /api/admin/auth/*                                           → pass (routes enforce themselves)
   ├─ verify admin_access JWT (sig, alg, iss, aud, exp, type, scope)
-  ├─ no valid token:
-  │     API   → 401 JSON (client interceptor refreshes + retries)
-  │     page  → refresh cookie present ? redirect /api/admin/auth/refresh?next=…
-  │                                    : redirect /auth/login?next=…
-  ├─ scope = mfa_setup                                             → only /auth/mfa-setup (pages) / 403 MFA_SETUP_REQUIRED (API)
-  └─ path prefix → permission (ROUTE_PERMISSIONS); role lacks it   → redirect /
+  ├─ no valid token: API → 401 JSON, page → refresh redirect or /auth/login
+  ├─ scope = mfa_setup → only MFA enrolment
+  ├─ API path with an id segment that is not a UUID               → 404 JSON   (new)
+  └─ page path → permission (ROUTE_PERMISSIONS); missing → redirect /
   ▼
-Page (server component shell + client components with SWR)        API route handler
-                                                                    ├─ requirePermission(p)   (JWT + Redis session + role)
-                                                                    ├─ validate input
-                                                                    ├─ SQL (or withTx for multi-row actions)
-                                                                    ├─ logAdminAction()       (after commit)
-                                                                    └─ JSON
+Route handler
+  ├─ requirePermission(p)   (JWT + Redis session + scope + role)
+  ├─ validate input
+  ├─ read: SQL.  write: internal API call to the OWNING service, or SQL on admin-owned columns
+  ├─ best-effort follow-ups (cache invalidate, search reindex)
+  ├─ logAdminAction()  (after the action; never turns a finished action into a 500)
+  └─ JSON
 ```
 
 ### Layers
 
 | Layer | Location | Rule |
 |---|---|---|
-| Edge gate | `middleware.ts` | Coarse: valid JWT + path-level permission. Cannot see Redis, so it cannot detect a destroyed session |
-| Guard | `lib/rbac-guard.ts` → `requirePermission()` | Authoritative: JWT + session still in Redis + `scope === 'full'` + role has permission |
-| Route handler | `app/api/admin/**/route.ts` | Parse, validate, run SQL, audit, respond. No shared service layer |
-| Domain helpers | `lib/*-api.ts`, `lib/*-constants.ts` | SQL fragments defined once (list, count, export share them), error classes, row mappers |
-| Constants | `lib/*-constants.ts` | No server-only imports: shared by server and client |
-| Hooks | `hooks/use*.ts` | SWR hooks + a `*Actions` object per module for mutations |
-| UI | `components/<module>/*` | Section → FilterBar → Table → KpiGrid pattern per module |
+| Edge gate | `middleware.ts` | Coarse: valid JWT, UUID id guard, path permission. Cannot see Redis |
+| Guard | `lib/rbac-guard.ts` | Authoritative: JWT + Redis session + `scope === 'full'` + permission |
+| Route handler | `app/api/admin/**/route.ts` | Parse, validate, call, audit, respond |
+| Service clients | `lib/internal-client.ts`, `lib/services/{booking,worker,review,search}.ts`, `lib/payment-service.ts`, `lib/notification-service.ts` | The **only** place that knows another service's URL, key and body shape |
+| Domain helpers | `lib/*-api.ts`, `lib/*-constants.ts` | SQL fragments defined once, error classes, row mappers |
+| Hooks | `hooks/use*.ts` | SWR + one `*Actions` object per module |
+| UI | `components/<module>/*` | Section → FilterBar → Table → KpiGrid |
 
-### Conventions that repeat in every module
+### Conventions
 
-- **Single SQL source of truth.** List, counts and CSV export reuse the same SQL fragment constants (`FROM_SQL`, `TAB_SQL`, `buildXWhere`), so numbers cannot disagree.
-- **Derived status, never stored.** User and worker `status`, worker `presence` and payment status are computed (`fn_user_status`, `fn_worker_status`, `fn_worker_presence`, `PAYMENT_STATUS_SQL`) from timestamps.
-- **Availability-aware lists.** Where another service's table may not exist, the route returns `{ available: false, data: [] }` on SQL error `42P01` / `42703` and the UI shows "not wired up yet".
-- **Reason required** on every destructive or state-changing action; it is stored in the audit log.
-- **Row lock + status guard** (`SELECT … FOR UPDATE`) inside `withTx()` for bookings, disputes, reviews and verification.
+- **Single SQL source of truth** for list, counts and CSV export.
+- **Derived status**, never stored (`fn_user_status`, `fn_worker_status`, `fn_worker_presence`).
+- **Availability-aware reads**: `{ available: false, data: [] }` on SQL error `42P01` / `42703`.
+- **Reason required** on every destructive action; it goes to the audit log.
+- **One owner per table.** The panel calls the owner's API instead of writing its tables (ADR-002, ADR-013).
 
 ---
 
@@ -208,299 +191,191 @@ Page (server component shell + client components with SWR)        API route hand
 
 ```
 tasklync-admin/
-├── middleware.ts                       # edge gate (JWT, CSRF origin check, route permission)
-├── next.config.ts                      # security headers, image hosts, no-store on auth + API
-├── package.json  tsconfig.json  eslint.config.mjs  postcss.config.mjs
-├── .env  .env.example  service-account.example.json   # real service-account.json is git-ignored
-├── AGENTS.md  CLAUDE.md  README.md  structure.txt  folderstructure.txt
-├── docs/ADMIN_PANEL.md                 # this file
-│
+├── middleware.ts  next.config.ts  package.json  tsconfig.json  eslint.config.mjs  vitest.config.ts
+├── .env  .env.example   AGENTS.md  CLAUDE.md  README.md  docs/ADMIN_PANEL.md
 ├── app/
-│   ├── layout.tsx  globals.css  favicon.ico
-│   ├── auth/                           # login, mfa, mfa-setup (+ layout)
-│   ├── (admin)/                        # layout = Sidebar + Header + SessionKeeper
-│   │   ├── page.tsx                    # dashboard
-│   │   ├── analytics/  bookings/[bookingId]/  categories/[categoryId]/
-│   │   ├── disputes/[disputeId]/  map/  notifications/[campaignId]/
-│   │   ├── payments/  reviews/[reviewId]/  users/[userId]/  waitlist/
-│   │   └── workers/[workerId]/  workers/verification/[workerId]/
-│   └── api/admin/                      # 121 route handlers (section 7)
-│       ├── auth/ (login logout refresh session mfa/{setup,setup-confirm,verify})
-│       ├── analytics/ bookings/ categories/ dashboard/ disputes/ map/
-│       ├── notifications/ payments/ pricing-config/ reviews/ users/ waitlist/ workers/
-│
-├── components/
-│   ├── layout/    Sidebar Header Breadcrumb
-│   ├── auth/      LoginForm MfaForm MfaSetupForm SessionKeeper
-│   ├── shared/    DataTable ConfirmDialog StatusBadge
-│   ├── ui/        Button Card Input Badge
-│   └── analytics bookings categories dashboard disputes map notifications
-│       payments reviews users verification waitlist workers      # one folder per module
-│
-├── db/migrations/001 … 015_*.sql
-├── generated-templates/{push,sms}/     # output of scripts/generate-broadcast-templates.ts
-├── hooks/                              # useAdminSession usePermission + one hook file per module
+│   ├── auth/ (login, mfa, mfa-setup)
+│   ├── (admin)/ analytics bookings categories disputes map notifications payments reviews users waitlist workers
+│   │            settings/page.tsx  settings/admins/page.tsx                         # NEW
+│   └── api/admin/ (auth, analytics, bookings, categories, dashboard, disputes, map, notifications, payments,
+│                   pricing-config, reviews, users, waitlist, workers,
+│                   admins/                                                          # NEW: admin-user management)
+├── components/ layout auth shared ui analytics bookings categories dashboard disputes map notifications
+│               payments reviews users verification waitlist workers
+│               settings/PricingSettings.tsx                                         # NEW
+├── db/migrations/001 … 016_*.sql
+├── hooks/  lib/  scripts/  types/  tests/                                            # tests/ is NEW
 ├── lib/
 │   ├── auth/       config cookies crypto issue jwt mfa password rate-limit rbac redirect request session trusted-device
-│   ├── store/      useSidebarStore
+│   │               uuid-guard.ts                                                     # NEW
+│   ├── services/   booking.ts worker.ts review.ts search.ts                          # NEW (internal API clients)
+│   ├── internal-client.ts cache.ts                                                   # NEW
 │   ├── db.ts redis.ts audit.ts rbac-guard.ts auth-fetch.ts swr-fetcher.ts cn.ts nav-config.ts
-│   ├── firebase-admin.ts direct-broadcast-engine.ts notification-catalog.ts notification-constants.ts
-│   ├── notification-service.ts  notifications-api.ts       # gateway client is now unused (ADR-009)
-│   ├── payment-service.ts payment-constants.ts payments-api.ts
-│   ├── booking-constants.ts bookings-api.ts dispute-constants.ts disputes-api.ts
-│   ├── review-constants.ts reviews-api.ts verification-api.ts verification-constants.ts
-│   ├── workers-api.ts map-api.ts map-constants.ts map-geo.ts
-│   ├── analytics-api.ts analytics-constants.ts parse-user-agent.ts
-├── scripts/
-│   ├── seed-super-admin.ts             # create first super admin (max 2)
-│   ├── setup-firebase.ts  encode-firebase-credentials.ps1
-│   ├── generate-broadcast-templates.ts
-│   └── test-direct-broadcast.ts
-├── types/                              # one file per module + auth
-└── public/favicon.ico
+│   ├── notification-service.ts notifications-api.ts notification-catalog.ts notification-constants.ts
+│   ├── payment-service.ts payments-api.ts payment-constants.ts
+│   ├── bookings-api.ts booking-constants.ts disputes-api.ts dispute-constants.ts
+│   ├── reviews-api.ts review-constants.ts verification-api.ts verification-constants.ts
+│   └── workers-api.ts map-api.ts map-constants.ts map-geo.ts analytics-api.ts analytics-constants.ts parse-user-agent.ts
+└── scripts/ migrate.ts  seed-super-admin.ts  generate-broadcast-templates.ts
+    (removed: setup-firebase.ts, encode-firebase-credentials.ps1, test-direct-broadcast.ts)
+(removed: lib/direct-broadcast-engine.ts, lib/firebase-admin.ts, service-account.example.json)
 ```
-
-> Missing on purpose or by omission: `scripts/publish-outbox.ts` (referenced in migration 007, does not exist), `app/(admin)/settings` (linked from the sidebar, no page), admin-user management pages and routes (permission exists, nothing built). See section 21.
-
-### File responsibilities (core)
-
-| File | Single responsibility |
-|---|---|
-| `middleware.ts` | Edge gate. Never touches Redis or DB |
-| `lib/rbac-guard.ts` | `requirePermission(permission)` → `{ ok, admin }` or a ready 401/403 response |
-| `lib/auth/jwt.ts` | HS256 sign/verify for access token and MFA challenge token (separate audience) |
-| `lib/auth/session.ts` | Redis sessions, refresh rotation, reuse detection, session cap |
-| `lib/auth/mfa.ts` | TOTP, backup codes, TOTP replay claim |
-| `lib/auth/crypto.ts` | AES-256-GCM for TOTP secrets, HMAC for backup codes |
-| `lib/auth/trusted-device.ts` | "Remember this device" cookie + `admin_trusted_devices` rows |
-| `lib/auth-fetch.ts` | Client fetch interceptor: 401 → refresh once → retry once |
-| `lib/audit.ts` | `logAdminAction`, `logAuthEvent`, client IP / UA helpers |
-| `lib/bookings-api.ts` | Booking SQL fragments, `withTx`, `lockBooking`, outbox writers |
-| `lib/direct-broadcast-engine.ts` | Resolve recipients → write feed rows → send FCM → write delivery rows |
-| `lib/payment-service.ts` | The only HTTP client to another service (payment-service) |
 
 ---
 
 ## 4. Database
 
-The admin panel uses the **same Supabase PostgreSQL database** as the other services (`DATABASE_URL`). Migrations are plain SQL files run by hand in order; there is no migration runner and no tracking table.
+The admin panel uses the **same Supabase PostgreSQL database** as the other services (`DATABASE_URL`).
 
 ### 4.1 Migrations
+
+Run with `npm run migrate` (tracks applied files in `admin_migrations`; on an existing database run once with `--baseline=015`).
 
 | # | File | What it does |
 |---|---|---|
 | 001 | `admin_auth` | `admin_users`, `admin_mfa_backup_codes`, `admin_audit_log` |
-| 002 | `dashboard_functions` | `platform_events` + 5 triggers, `get_dashboard_kpis`, `get_needs_attention`, `get_revenue_chart`, `get_revenue_by_city`, `get_booking_funnel` |
-| 003 | `waitlist_functions` | `pg_trgm`, waitlist indexes, `get_waitlist_kpis`, `get_waitlist_growth`, `get_utm_breakdown` |
-| 004 | `users_moderation` | Moderation columns on `users`, trigram indexes, `fn_user_status`, `get_user_overview` |
+| 002 | `dashboard_functions` | `platform_events` + triggers, dashboard functions (superseded by 016 for KPIs, revenue and needs-attention) |
+| 003 | `waitlist_functions` | `pg_trgm`, waitlist indexes and functions |
+| 004 | `users_moderation` | moderation columns on `users`, `fn_user_status`, `get_user_overview` |
 | 005 | `pricing_config` | `platform_pricing_config` singleton |
-| 006 | `workers_moderation` | Moderation + featured + re-verification columns on `workers`, `worker_badges`, `fn_worker_status`, `fn_worker_presence`, `get_worker_kpis`, `get_worker_overview` |
-| 007 | `worker_verification` | KYC columns on `workers`, `worker_verification_reviews`, `admin_event_outbox` |
-| 008 | `bookings_admin` | Refund columns, `booking_status_history` + trigger + backfill, `booking_admin_notes`, `get_booking_kpis` |
-| 009 | `payments_admin` | Read indexes on payment-service tables |
-| 010 | `disputes_admin` | Assignment/escalation columns, `dispute_admin_notes`, indexes, `get_needs_attention` v2 |
-| 011 | `analytics` | `analytics_day_start`, `analytics_period_stats`, `analytics_retention`, `get_analytics_kpis/growth/city_trend/cities/funnels/categories` |
-| 012 | `notifications_admin` | Read indexes on notification-service tables (guarded by `to_regclass`) |
-| 013 | `live_map` | `search_demand_log`, indexes, `get_map_demand_cells` |
-| 014 | `reviews_admin` | Moderation audit columns, report resolution, `review_admin_notes`, `get_needs_attention` v3 (final) |
-| 015 | `admin_session_hardening` | `admin_trusted_devices`, unique `LOWER(email)` index |
+| 006 | `workers_moderation` | moderation columns on `workers`, `worker_badges`, `fn_worker_status`, `fn_worker_presence`, KPIs, overview |
+| 007 | `worker_verification` | KYC columns, `worker_verification_reviews`, `admin_event_outbox` (deprecated) |
+| 008 | `bookings_admin` | refund columns, `booking_status_history` + trigger, notes, `get_booking_kpis` |
+| 009 | `payments_admin` | read indexes on payment-service tables |
+| 010 | `disputes_admin` | assignment / escalation columns, notes, indexes |
+| 011 | `analytics` | analytics functions |
+| 012 | `notifications_admin` | read indexes on notification tables |
+| 013 | `live_map` | `search_demand_log`, `get_map_demand_cells` |
+| 014 | `reviews_admin` | moderation audit columns, report resolution, notes |
+| 015 | `admin_session_hardening` | `admin_trusted_devices`, unique `LOWER(email)` |
+| **016** | `round2_hardening` | `admin_audit_log.resource_id` → VARCHAR(100); pricing config split into customer fee and worker commission; `get_user_kpis()`; dashboard KPIs, revenue chart and revenue by city on **one date basis (completion time, Karachi)**; **canonical `get_needs_attention()`** (adds stuck `IN_PROGRESS` jobs); RLS on admin tables; outbox marked deprecated |
 
-**Run order matters.** Every migration after 001 needs the other services' tables to exist first (users, workers, bookings, disputes, payments, reviews, notifications). 014 aborts with a clear error if review-service tables are missing. `get_needs_attention()` is redefined in 002, 010 and 014; **014 is the final version**: if you re-run 002 or 010 afterwards you lose the newer blocks.
-
-Not defined in any admin migration but called by the code (must exist in the shared DB, owned by the user/auth side): `get_user_kpis()`. The `waitlist` table itself is created by the website, not the admin panel.
+**Run order matters:** every migration after 001 needs other services' tables first. `get_needs_attention()` was redefined in 002, 010 and 014; **016 holds the final definition**. If you ever re-run 002, 010 or 014, run section 5 of 016 again.
 
 ### 4.2 Admin-owned tables
 
 ```sql
-admin_users (
-  id uuid PK, email varchar(255) UNIQUE (+ unique index on LOWER(email)),
-  password_hash varchar(255), full_name varchar(255),
-  role varchar(50) CHECK IN ('SUPER_ADMIN','OPS','FINANCE','SUPPORT'),
-  is_active bool DEFAULT true,
-  mfa_secret varchar(255)      -- AES-256-GCM "v1:<iv>.<tag>.<ct>", legacy plaintext still readable
-  mfa_enabled bool DEFAULT false,
-  last_login_at, last_login_ip, failed_attempts int, locked_until timestamptz,
-  created_by uuid → admin_users, created_at, updated_at
-)
-
-admin_mfa_backup_codes ( id, admin_id → admin_users ON DELETE CASCADE,
-                         code_hash,   -- "hmac1:<hex>" (legacy bcrypt "$2…" still verified)
-                         used_at, created_at )
-
-admin_trusted_devices ( id uuid PK (= cookie id), admin_id, token_hash CHAR(64) sha256(secret),
-                        ip_address, user_agent, created_at, last_used_at, expires_at, revoked_at )
-
-admin_audit_log ( id, admin_id, admin_email, action varchar(100), resource_type, resource_id uuid,
-                  old_value jsonb, new_value jsonb, notes, ip_address varchar(50), user_agent, created_at )
-
-admin_event_outbox ( id bigserial, topic, event_type, event_key, payload jsonb,
-                     created_at, published_at, attempts, last_error )     -- relay missing, see 21
-
-platform_events ( id, event_type varchar(50), message, metadata jsonb, created_at )   -- dashboard feed
-platform_pricing_config ( id bool PK CHECK (id = true), platform_fee_percent 15.00, demand_threshold 3,
-                          demand_multiplier 1.2, urgency_same_day_multiplier 1.3,
-                          urgency_within_2h_multiplier 1.5, off_peak_multiplier 0.9, updated_by, updated_at )
-booking_status_history ( id bigserial, booking_id, from_status, to_status, actor, is_backfilled, changed_at )
+admin_users ( id uuid PK, email UNIQUE (+ unique LOWER(email)), password_hash, full_name,
+              role CHECK IN ('SUPER_ADMIN','OPS','FINANCE','SUPPORT'), is_active,
+              mfa_secret   -- AES-256-GCM "v1:<iv>.<tag>.<ct>", mfa_enabled,
+              last_login_at, last_login_ip, failed_attempts, locked_until, created_by, created_at, updated_at )
+admin_mfa_backup_codes ( id, admin_id, code_hash "hmac1:<hex>", used_at, created_at )
+admin_trusted_devices ( id uuid, admin_id, token_hash CHAR(64), ip_address, user_agent, created_at, last_used_at, expires_at, revoked_at )
+admin_audit_log ( id, admin_id, admin_email, action, resource_type, resource_id VARCHAR(100)  -- was UUID,
+                  old_value jsonb, new_value jsonb, notes, ip_address, user_agent, created_at )
+platform_events ( id, event_type, message, metadata jsonb, created_at )
+platform_pricing_config ( id bool PK = true, customer_platform_fee_percent 5.00, worker_commission_percent 5.00,
+                          platform_fee_percent (informational total), demand_threshold, demand_multiplier,
+                          urgency_same_day_multiplier, urgency_within_2h_multiplier, off_peak_multiplier, updated_by, updated_at )
+booking_status_history ( id, booking_id, from_status, to_status, actor 'admin:<email>' | NULL, is_backfilled, changed_at )
 booking_admin_notes / dispute_admin_notes / review_admin_notes ( id, <entity>_id, admin_id, admin_email, note, created_at )
-worker_badges ( worker_id, badge IN ('top_rated','background_verified'), awarded_by, UNIQUE(worker_id,badge) )
-worker_verification_reviews ( worker_id, decision IN ('approved','rejected','info_requested'),
-                              reason_code, note, allow_resubmission, admin_id, admin_email, created_at )
 search_demand_log ( id, user_id, lat, lng, category_id, query_text, result_count, created_at )
+admin_migrations ( id, name UNIQUE, ran_at )
 ```
+`worker_badges` and `worker_verification_reviews` are **shared with worker-service** (it owns the flow; the admin panel reads the review history and writes only the two admin badges).
 
 ### 4.3 Columns the admin panel adds to other services' tables
 
-| Table (owner) | Columns | Written by |
+| Table (owner) | Columns | Enforced / used by |
 |---|---|---|
-| `users` (auth/user) | `suspended_until/reason/by`, `banned_at/reason/by`, `warning_count`, `last_warning_at/reason` | admin; **enforced by auth-service and user-service** (their docs list the same columns) |
-| `workers` (worker) | same moderation set + `is_featured`, `featured_at`, `reverification_requested_at`, `reverification_reason` | admin |
-| `workers` | `cnic_number`, `date_of_birth`, `registration_ip`, `verification_rejection_code/note`, `verification_resubmission_allowed`, `verified_at`, `verified_by` | worker-service on upload, admin on decision |
-| `bookings` (booking) | `refund_amount`, `refund_percentage` | admin cancel / dispute resolve (booking-service already has them) |
-| `disputes` (booking) | `assigned_to`, `assigned_at`, `is_escalated`, `escalated_at/by`, `escalation_note` | admin |
-| `reviews`, `review_reports` (review) | `moderated_by/at`, `moderation_note`, `resolved_at/by` | admin (review-service migration 005 creates the same columns) |
+| `users` | `suspended_*`, `banned_*`, `warning_count`, `last_warning_*` | auth-service and user-service (login and status checks) |
+| `workers` | same moderation set, `is_featured`, `featured_at`, `reverification_*`, `cnic_number`, `date_of_birth`, `registration_ip`, `verification_rejection_*`, `verified_at/by` | worker-service moderation endpoint writes the moderation columns; admin writes featured / CNIC / re-verification |
+| `bookings` | `refund_amount`, `refund_percentage` | booking-service writes them too |
+| `disputes` | `assigned_to/at`, `is_escalated`, `escalated_*`, `escalation_note` | admin only |
+| `reviews`, `review_reports` | `moderated_*`, `moderation_note`, `resolved_at/by` | review-service migration creates the same columns |
 
-All `ADD COLUMN IF NOT EXISTS`, so repeated application is safe. Tell the owning team before changing any of them.
+All `ADD COLUMN IF NOT EXISTS`. Tell the owning team before changing any of them.
 
 ### 4.4 Database functions and triggers
 
 | Function | Used by |
 |---|---|
-| `fn_user_status`, `fn_worker_status` | status column on every user/worker list, map, analytics |
-| `fn_worker_presence` | worker list, map, KPIs. `<90 s` online, `90 s–10 min` away, else offline; paused / on_job override |
-| `get_user_overview`, `get_worker_overview` | detail page header, one round trip |
-| `get_dashboard_kpis`, `get_needs_attention`, `get_revenue_chart`, `get_revenue_by_city`, `get_booking_funnel` | dashboard |
-| `get_waitlist_*`, `get_utm_breakdown` | waitlist |
-| `get_worker_kpis`, `get_booking_kpis` | list-page KPI cards (Karachi "today") |
-| `get_analytics_*`, `analytics_*` | analytics page |
-| `get_map_demand_cells` | live map heatmap, ~2 km grid (0.02°) |
-| `fn_log_booking_status_history` (trigger on `bookings` INSERT / UPDATE OF status) | booking timeline. Reads `current_setting('app.actor')` so admin changes show `admin:<email>` |
-| `fn_log_booking_created`, `fn_log_booking_disputed`, `fn_log_worker_verified`, `fn_log_payment_completed`, `fn_log_user_registered` | fill `platform_events`. **`trg_user_registered` / `fn_log_user_registered` come from migration 002**, not from auth-service (the auth-service doc says "owned by another service": this is that service) |
+| `fn_user_status`, `fn_worker_status`, `fn_worker_presence` | status / presence on every list, map, analytics |
+| `get_user_overview`, `get_worker_overview` | detail page header |
+| `get_user_kpis` (016), `get_worker_kpis`, `get_booking_kpis` | list-page KPI cards (Karachi "today") |
+| `get_dashboard_kpis`, `get_revenue_chart`, `get_revenue_by_city` (016 versions) | dashboard. Revenue = completed bookings by **completion time**, same basis as Finance |
+| `get_needs_attention` (016) | dashboard attention panel: stale disputes (24 h), stale verifications (48 h), failed payments, pending bookings > 30 min, **in-progress bookings > 6 h past their end**, flagged reviews |
+| `get_waitlist_*`, `get_analytics_*`, `analytics_*`, `get_map_demand_cells` | their pages |
+| `fn_log_booking_status_history` (trigger on `bookings`) | booking timeline; reads `app.actor`, which booking-service sets to `admin:<email>` for admin actions |
+| `fn_log_booking_created`, `fn_log_booking_disputed`, `fn_log_worker_verified`, `fn_log_payment_completed`, `fn_log_user_registered` | fill `platform_events` |
 
-### 4.5 Time-zone rule
+### 4.5 Row level security
 
-Every "today", "this month" and day bucket is computed in `Asia/Karachi` (`now() AT TIME ZONE 'Asia/Karachi'`). Dates returned to the browser are `YYYY-MM-DD` strings (`to_char`) to avoid JavaScript time-zone shifts.
+016 enables RLS (no policies) on the admin-owned tables. The panel connects with a role that bypasses RLS (Supabase `postgres`). The anon key must never ship in a client. Tables shared with other services are not touched by 016.
+
+### 4.6 Time-zone rule
+
+Every "today", "this month" and day bucket is `Asia/Karachi`. Revenue everywhere (dashboard, finance, analytics) is dated by completion time. Dates returned to the browser are `YYYY-MM-DD` strings.
 
 ---
 
 ## 5. Authentication & Sessions
 
-Admin auth is **fully separate** from auth-service: own table, own secret, own cookies, own Redis keys.
+Admin auth is **fully separate** from auth-service: own table, own secret, own cookies, own Redis keys. (Unchanged from v1.0.0; summarised.)
 
 ### 5.1 Tokens and cookies
 
-| Cookie | Content | Lifetime | Path | Notes |
-|---|---|---|---|---|
-| `admin_access` | JWT HS256, `aud=tasklync-admin-panel`, claims `sub, email, role, sessionId, scope, type=access` | 15 min | `/` | `scope`: `full` or `mfa_setup` |
-| `admin_session` | Opaque 32-byte hex refresh token (64 chars). Only its sha256 is stored in Redis | 8 h session cookie, or 7 d if remembered | `/` | Browser-session cookie when not remembered |
-| `admin_device` | `<uuid>.<secret>` trusted-device token. Only sha256(secret) is stored in DB | 7 d | `/` | Skips MFA on this browser |
-| `admin_mfa` | JWT `aud=tasklync-admin-mfa`, `purpose=mfa_pending`, single use (jti in Redis) | 5 min | `/api/admin/auth/mfa` only | Never sent to other routes |
+| Cookie | Content | Lifetime | Path |
+|---|---|---|---|
+| `admin_access` | JWT HS256 (`aud=tasklync-admin-panel`; claims `sub, email, role, sessionId, scope, type=access`) | 15 min | `/` |
+| `admin_session` | opaque 32-byte hex refresh token (sha256 stored in Redis) | 8 h browser-session, or 7 d if remembered | `/` |
+| `admin_device` | `<uuid>.<secret>` trusted-device token (sha256(secret) in DB) | 7 d | `/` |
+| `admin_mfa` | JWT `aud=tasklync-admin-mfa`, single use | 5 min | `/api/admin/auth/mfa` |
 
-All cookies are `httpOnly`, `Secure` in production, `SameSite=Lax` (so links from Slack/email keep you signed in). Tokens are **never** returned in JSON bodies. The MFA challenge uses a different audience so it can never pass as an access token.
+`httpOnly`, `Secure` in production, `SameSite=Lax`. Tokens never appear in JSON bodies.
 
 ### 5.2 Login flow
 
 ```
-POST /api/admin/auth/login { email, password }
-  ├─ IP limit 30 / 15 min, then email limit 15 / 15 min             → 429
-  ├─ load admin by LOWER(email); verify bcrypt (dummy hash when the email does not exist)
-  ├─ wrong password: failed_attempts + 1 (atomic UPDATE); at 5 → locked_until = now + 30 min
-  │     generic 401 "Invalid email or password" (no enumeration)
-  ├─ correct password but locked_until in the future                → 423 (only now do we reveal it)
-  ├─ MFA enabled
-  │     ├─ valid trusted-device cookie for THIS admin               → full session, no code
-  │     └─ else: set admin_mfa cookie + Redis admin:mfa_tmp:{jti}   → { requiresMFA: true }
-  ├─ MFA not enabled, ADMIN_MFA_REQUIRED=true
-  │     → limited session (scope=mfa_setup, 30 min)                 → { mfaSetupRequired: true }
-  └─ MFA not enabled, MFA not required                              → full session
+POST /api/admin/auth/login → IP limit 30/15 min, email limit 15/15 min → bcrypt (dummy hash if unknown email)
+  wrong password: atomic failed_attempts+1, at 5 → locked 30 min, generic 401
+  correct password but locked → 423 (only now revealed)
+  MFA enrolled: trusted-device cookie for THIS admin → full session; else admin_mfa cookie → { requiresMFA }
+  MFA not enrolled + ADMIN_MFA_REQUIRED → limited session (scope mfa_setup, 30 min)
+POST /api/admin/auth/mfa/verify → TOTP (±1 step) with replay claim, or backup code (atomic single use); 5 failures burn the challenge and lock the account
+POST /api/admin/auth/mfa/setup[-confirm] → QR + secret; confirm stores AES-GCM secret, 10 backup codes shown once, FRESH session, trusted device
 ```
-
-```
-POST /api/admin/auth/mfa/verify { code, remember? }        (admin_mfa cookie required)
-  ├─ IP limit 40 / 15 min
-  ├─ challenge valid and still in Redis (single use)
-  ├─ 5 wrong codes in 15 min: challenge burned, account locked 30 min, auth.mfa_lockout logged
-  ├─ 6 digits  → TOTP (±1 step) AND replay claim (Redis NX 120 s)
-  ├─ else      → backup code (XXXXX-XXXX style), atomic UPDATE used_at, single use
-  └─ success: new session, markLoginSuccess, optional trusted device (remember=true)
-```
-
-```
-POST /api/admin/auth/mfa/setup           → QR (data URL) + manual secret; pending secret in Redis 10 min
-POST /api/admin/auth/mfa/setup-confirm   → verifies first code, stores AES-GCM encrypted secret,
-                                           generates 10 backup codes (shown ONCE), destroys the
-                                           password-only session and issues a FRESH full session,
-                                           trusts the device
-```
-
-Setup is refused (`409`) when MFA is already enabled, so a stolen session cannot swap the authenticator.
 
 ### 5.3 Sessions (Redis)
 
-```
-admin:sess:{sid}           SessionRecord JSON       TTL = remaining life (absolute expiry, never extended)
-admin:rt:{sha256(rt)}      sid                      current refresh token
-admin:rt_used:{sha256}     { sid, at }              rotated-out tokens (theft detection)
-admin:sessions:{adminId}   zset of sids             concurrent-session limit (max 3, oldest evicted)
-```
-
-- **Rotation:** every refresh consumes the old token (`GETDEL`, atomic) and issues a new one. The session's `expiresAt` is fixed at login.
-- **Grace window (20 s):** a second tab presenting the just-rotated token gets a new access token only; its refresh cookie is left alone (the other tab's cookie wins).
-- **Reuse detection:** a rotated token replayed after the grace window kills the whole session and logs `auth.refresh_reuse_detected`.
-- **Account re-check on every refresh:** a deactivated admin loses **all** sessions (`destroyAllSessions`).
-- **Real logout:** `POST /logout` deletes the Redis session, both cookies; `?forget=1` also revokes the trusted device (use on shared computers).
-- **`authenticateAccessToken`** (used by `requirePermission`) requires the JWT **and** the Redis session, so logout, eviction and deactivation take effect immediately for API calls. The edge middleware cannot check Redis, so a still-valid JWT can open the page shell for up to 15 min after a session was destroyed; no data loads because every API call is rejected.
+Rotating refresh tokens (`GETDEL`), 20 s grace for two tabs, reuse of a rotated token kills the session, account re-checked at every refresh, absolute expiry never extended, max 3 sessions. `authenticateAccessToken` needs both the JWT and the Redis session, so logout, eviction, deactivation, **role change and MFA reset (section 6.5)** take effect immediately for API calls.
 
 ### 5.4 Client-side silent refresh
 
-`lib/auth-fetch.ts` patches `window.fetch` once (installed by `SessionKeeper` and by `MfaSetupForm`):
-
-1. Only same-origin `/api/admin/*` calls except login, refresh, logout and mfa/verify.
-2. On `401` → `refreshSession()` (one request in flight, serialised across tabs with the Web Locks API, skipped if another tab refreshed in the last 8 s) → retry once.
-3. Refresh failed → redirect to `/auth/login?reason=expired`.
-
-`SessionKeeper` also refreshes every 10 min while the tab is visible. For full-page loads with an expired access cookie, middleware redirects through `GET /api/admin/auth/refresh?next=…` (`safeNextPath` blocks open redirects).
+`lib/auth-fetch.ts` patches `window.fetch` for same-origin `/api/admin/*`: 401 → one refresh (Web Locks across tabs) → one retry, else redirect to `/auth/login?reason=expired`. `SessionKeeper` refreshes every 10 min while visible.
 
 ### 5.5 Crypto
 
-| Item | Method |
-|---|---|
-| Passwords | bcrypt, 12 rounds. 12–72 bytes, upper + lower + digit |
-| TOTP secret at rest | AES-256-GCM, key `ADMIN_MFA_ENCRYPTION_KEY` (32 bytes base64). Legacy plaintext secrets are re-encrypted on next successful login |
-| Backup codes | HMAC-SHA256 with a key derived from the encryption key (40 bits of entropy, so no bcrypt needed) |
-| JWT | HS256, `ADMIN_JWT_SECRET` ≥ 32 bytes, `clockTolerance` 5 s |
-| Refresh / device secrets | 32 random bytes, only sha256 stored |
-
-> **Losing `ADMIN_MFA_ENCRYPTION_KEY` means every admin has to re-enrol MFA.** Back it up like a password.
+bcrypt 12 rounds (12–72 bytes, upper + lower + digit); TOTP secrets AES-256-GCM with `ADMIN_MFA_ENCRYPTION_KEY`; backup codes HMAC-SHA256; JWT HS256 with `ADMIN_JWT_SECRET` ≥ 32 bytes. **Losing the encryption key forces every admin to re-enrol MFA.**
 
 ---
 
 ## 6. RBAC (Roles & Permissions)
 
-Source of truth: `lib/auth/rbac.ts` (`PERMISSIONS`, `ROUTE_PERMISSIONS`). Nav visibility is a **separate** list in `lib/nav-config.ts`.
+Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/nav-config.ts` (now consistent with the permissions).
 
 ### 6.1 Roles
 
 | Role | Purpose |
 |---|---|
-| `SUPER_ADMIN` | Everything. Only role that can ban, impersonate, create categories, edit pricing, broadcast to all users/workers, resolve escalated disputes |
-| `OPS` | Operations: verification, workers/users moderation (except ban), bookings, disputes, notifications, map, reviews |
+| `SUPER_ADMIN` | Everything: ban, create categories, edit pricing, broadcast to all, resolve escalated disputes, manage admins |
+| `OPS` | Operations: verification, workers / users moderation (except ban), bookings, disputes, notifications, map, reviews, waitlist |
 | `FINANCE` | Payments, analytics, dashboard, categories (read) |
 | `SUPPORT` | Read-mostly: users, workers (read), bookings, disputes, reviews, with warn / note / escalate |
 
-### 6.2 Permission matrix (`✓` = allowed)
+### 6.2 Permission matrix
 
 | Permission | SUPER | OPS | FIN | SUP |
 |---|:-:|:-:|:-:|:-:|
 | `dashboard:view`, `categories:view` | ✓ | ✓ | ✓ | ✓ |
-| `waitlist:view` | ✓ | ✓ | ✓ | ✓ |
-| `waitlist:manage` | ✓ | ✓ | | |
+| `waitlist:view`, `waitlist:manage` | ✓ | ✓ | | |
 | `workers:view` | ✓ | ✓ | | ✓ |
-| `workers:verify` (queue, review page, documents) | ✓ | ✓ | | |
+| `workers:verify` | ✓ | ✓ | | |
 | `workers:warn`, `:suspend`, `:edit`, `:feature`, `:badge`, `:force-offline` | ✓ | ✓ | | |
 | `workers:ban` | ✓ | | | |
 | `users:view`, `users:warn` | ✓ | ✓ | | ✓ |
 | `users:suspend`, `users:edit` | ✓ | ✓ | | |
-| `users:ban`, `users:impersonate` | ✓ | | | |
+| `users:ban` | ✓ | | | |
 | `bookings:view`, `:cancel`, `:escalate`, `:note` | ✓ | ✓ | | ✓ |
 | `bookings:override`, `:reassign` | ✓ | ✓ | | |
 | `payments:view`, `:refund`, `:payout`, `:export` | ✓ | | ✓ | |
@@ -515,195 +390,136 @@ Source of truth: `lib/auth/rbac.ts` (`PERMISSIONS`, `ROUTE_PERMISSIONS`). Nav vi
 | `categories:create`, `:edit`, `services:edit` | ✓ | | | |
 | `settings:view`, `settings:edit`, `admin_users:manage` | ✓ | | | |
 
+`users:impersonate` no longer exists.
+
 ### 6.3 Enforcement points
 
-1. **Middleware** maps path prefixes to a permission (`/workers/verification` before `/workers`; `find()` + `startsWith`, so order matters). A role without the permission is redirected to `/`.
+1. **Middleware**: path prefix → permission (`/workers/verification` before `/workers`; `/settings/admins` before `/settings`; `/waitlist` and `/settings` are now listed). Missing permission → redirect `/` for pages, 403 JSON for API.
 2. **Every API handler** starts with `requirePermission('x:y')`.
-3. **Inline rules** inside handlers: escalated disputes (`is_escalated` + not SUPER_ADMIN → 403), claim rules, broadcast-all, quiet hours.
-4. **UI:** `Sidebar` filters `NAV_ITEMS` by role; `usePermission()` hides buttons. UI hiding is cosmetic; the API decides.
+3. **Inline rules**: escalated disputes, claim rules, broadcast-all, last Super Admin protection.
+4. **UI**: `Sidebar` filters `NAV_ITEMS`; `usePermission()` hides buttons. Cosmetic only; the API decides.
 
-### 6.4 Known RBAC inconsistencies
+### 6.4 Remaining RBAC notes
 
-- `/waitlist` has **no entry in `ROUTE_PERMISSIONS`**, so middleware lets every signed-in role open the page; the nav shows it only to SUPER_ADMIN and OPS while `waitlist:view` allows all four roles. Pick one rule.
-- Nav shows "Workers" to SUPER_ADMIN and OPS only, but `workers:view` also allows SUPPORT. SUPPORT can reach the pages by URL and the APIs allow it.
-- `DashboardPage` and `/` have no route permission: any full-scope admin can open it (APIs check `dashboard:view`, which all four roles have).
+- `/` (dashboard) has no route permission; every full-scope admin may open it (all four roles have `dashboard:view`).
+
+### 6.5 Admin-user management (new)
+
+`Settings → Admin users` (`/settings/admins`, SUPER_ADMIN): list, create (temporary password, MFA forced at first login), change role, activate / deactivate, sign out everywhere, reset MFA. Rules: you cannot change yourself, the last active Super Admin cannot be demoted or deactivated, at most 2 Super Admins. Every change destroys that admin's Redis sessions (and trusted devices on deactivate or MFA reset) immediately.
 
 ---
 
 ## 7. API Reference
 
-Base path: `/api/admin`. Auth: httpOnly cookie. All unsafe methods also pass the Origin check. Errors: `{ "error": "message" }` (some also `code`). Lists: `{ data, page, pageSize, total, totalPages }` (waitlist uses `rows`). Page size is capped at 100 almost everywhere. Every route that is not under `/auth` calls `requirePermission`.
+Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin check. Errors `{ "error": "message", code? }`. Lists `{ data, page, pageSize, total, totalPages }`. A malformed `:id` on users / workers / bookings / disputes / reviews / payouts / campaigns / admins returns `404` from middleware.
 
 ### 7.1 Auth (`/auth`)
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/login` | public, rate limited | Password step (5.2) |
-| POST | `/auth/logout` | cookie optional | `?forget=1` also forgets the device |
-| POST | `/auth/refresh` | refresh cookie | XHR refresh, returns `{ ok: true }` + new cookies |
-| GET | `/auth/refresh?next=` | refresh cookie | Navigation refresh, redirects to `next` |
-| GET | `/auth/session` | access cookie (any scope) | Current admin; `mfaSetupRequired` when scope is `mfa_setup` |
-| POST | `/auth/mfa/setup` | access cookie (any scope) | QR + secret |
-| POST | `/auth/mfa/setup-confirm` | access cookie (any scope) | Enable MFA, returns backup codes once |
-| POST | `/auth/mfa/verify` | `admin_mfa` cookie | TOTP or backup code, `remember` |
+`POST /login`, `POST /logout` (`?forget=1`), `POST|GET /refresh`, `GET /session`, `POST /mfa/setup`, `POST /mfa/setup-confirm`, `POST /mfa/verify`. Unchanged.
 
 ### 7.2 Dashboard (`dashboard:view`)
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/dashboard/kpis` | `get_dashboard_kpis()`: revenue today/yesterday, active bookings, signups, pending verifications + 7-day sparklines |
-| GET | `/dashboard/attention` | `get_needs_attention()`: stale disputes (>24 h), stale verifications (>48 h), failed payments, stuck PENDING bookings (>30 min), flagged reviews |
-| GET | `/dashboard/activity` | Last 50 `platform_events` |
-| GET | `/dashboard/revenue?period=daily|weekly|monthly` | Chart + by-city table |
-| GET | `/dashboard/funnel` | Created → Accepted → Started → Completed, last 30 days |
+`GET /dashboard/kpis`, `/attention`, `/activity`, `/revenue?period=daily|weekly|monthly`, `/funnel`. Revenue is completion-time based.
 
 ### 7.3 Waitlist
 
-| Method | Path | Permission | Description |
-|---|---|---|---|
-| GET | `/waitlist` | `waitlist:view` | List: `search, status, utm_source (direct = NULL), dateFrom, dateTo, sortBy (created_at|position|email), sortDir, page, pageSize (10–100)`. Rows enriched with UA-parsed device/browser/OS |
-| GET | `/waitlist/kpis` | view | Totals, today/week change, conversion rate, top source, sparkline |
-| GET | `/waitlist/growth?period=` | view | Bucketed signups + cumulative (30 days / 12 weeks / 12 months) |
-| GET | `/waitlist/utm-breakdown` | view | Source breakdown |
-| GET | `/waitlist/device-breakdown` | view | Parses up to 20 000 user agents in Node |
-| GET | `/waitlist/export` | view | Full CSV, audited as `waitlist.exported` |
-| PATCH | `/waitlist/:id/status` | `waitlist:manage` | `pending | invited | converted` (any transition allowed) |
+`GET /waitlist`, `/kpis`, `/growth`, `/utm-breakdown`, `/device-breakdown`, `/export` (audited); `PATCH /waitlist/:id/status` (`waitlist:manage`).
 
 ### 7.4 Users
 
-| Method | Path | Permission | Description |
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/users` | `users:view` | Filters: `search, city (default address), status, bookingsBucket (0, 1-5, 5-20, 20+), dateFrom, dateTo, sortBy, sortDir, page, pageSize`. `hasDispute` is accepted and ignored |
-| GET | `/users/kpis` | view | `get_user_kpis()` |
-| GET | `/users/export` | view | CSV (no BOM, no audit entry) |
-| GET | `/users/:id` | view | `get_user_overview()` |
-| GET | `/users/:id/addresses` · `/blocked-workers` · `/bookings` · `/reviews` · `/reports` | view | Detail tabs, availability-aware |
-| POST | `/users/:id/actions/warn` | `users:warn` | `{ reason }`, increments `warning_count` |
-| POST | `/users/:id/actions/suspend` | `users:suspend` | `{ reason, duration: 7d|30d|custom, until? }`. Sets `suspended_until`, `is_active=false` |
-| POST | `/users/:id/actions/unsuspend` | `users:suspend` | Clears suspension, `is_active=true` |
-| POST | `/users/:id/actions/ban` | `users:ban` | `{ reason }`, sets `banned_at`, `is_active=false` |
-| PATCH | `/users/:id/actions/edit-contact` | `users:edit` | `{ phone?, email? }`, `409` on duplicate |
-| POST | `/users/:id/actions/impersonate` | `users:impersonate` | Returns an impersonation URL (20 min JWT). See 21 |
+| GET | `/users`, `/users/kpis`, `/users/export` | `users:view` | export is audited, has a BOM, includes the whole `dateTo` day |
+| GET | `/users/:id`, `/addresses`, `/blocked-workers`, `/bookings`, `/reviews`, `/reports` | view | `reports` = disputes the user opened (no `reports` table exists) |
+| POST | `/users/:id/actions/warn`, `/suspend`, `/unsuspend` | warn / suspend | clears user caches |
+| POST | `/users/:id/actions/ban` | `users:ban` | clears user caches |
+| PATCH | `/users/:id/actions/edit-contact` | `users:edit` | clears user caches |
+| POST | `/users/:id/actions/impersonate` | none | **410 Gone**, removed |
 
 ### 7.5 Workers
 
-| Method | Path | Permission | Description |
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/workers` | `workers:view` | Filters: `search, city, categoryId, verification, status, presence, ratingBucket (lt3, 3-4, 4+, unrated), dateFrom, dateTo, sortBy (created_at, name, total_bookings, avg_rating)`. Deleted workers hidden unless `status=deleted` |
-| GET | `/workers/kpis` · `/filter-options` · `/export` | view | KPIs, active categories, CSV (BOM) |
-| GET | `/workers/:id` | view | `get_worker_overview()` |
-| GET | `/workers/:id/performance` · `/earnings` · `/jobs` · `/reviews` · `/availability` · `/catalog` | view | Detail tabs, availability-aware |
-| GET | `/workers/:id/documents` | `workers:verify` | KYC documents (CNIC images) |
-| POST | `/workers/:id/actions/warn` | `workers:warn` | `{ reason }` |
-| POST | `/workers/:id/actions/unsuspend` | `workers:suspend` | Lifts a suspension only; a banned worker stays banned |
-| POST | `/workers/:id/actions/ban` | `workers:ban` | Also clears `is_featured` |
-| PATCH | `/workers/:id/actions/edit-contact` | `workers:edit` | `{ phone?, email? }` |
-| POST | `/workers/:id/actions/feature` | `workers:feature` | `{ featured: boolean }`. Only VERIFIED + not banned can be featured |
-| POST | `/workers/:id/actions/badge` | `workers:badge` | `{ badge: top_rated|background_verified, action: add|remove }` |
-| POST | `/workers/:id/actions/force-offline` | `workers:force-offline` | `{ reason }`. Sets `manually_paused = true` and back-dates `last_seen_at` by 1 h (back-dating alone would be undone by the next heartbeat) |
-| POST | `/workers/:id/actions/request-reverification` | `workers:verify` | VERIFIED → UNVERIFIED, clears featured |
-| POST | `/workers/:id/actions/approve-verification` · `reject-verification` · `request-info` | `workers:verify` | See 7.6 |
-
-> The hook `workerActions.suspend` calls `POST /workers/:id/actions/suspend`. **That route does not exist** (see section 21).
+| GET | `/workers`, `/kpis`, `/filter-options`, `/export` | `workers:view` | export audited |
+| GET | `/workers/:id`, `/performance`, `/earnings`, `/jobs`, `/reviews`, `/availability`, `/catalog` | view | `earnings` computed from completed bookings |
+| GET | `/workers/:id/documents` | `workers:verify` | **signed URLs from worker-service**, access logged (`worker.documents_viewed`) |
+| POST | `/workers/:id/actions/warn` | `workers:warn` | SQL |
+| POST | `/workers/:id/actions/suspend` | `workers:suspend` | **new**; `{ reason, duration: 7d\|30d\|custom, until? }`; worker-service moderation endpoint |
+| POST | `/workers/:id/actions/unsuspend` | `workers:suspend` | worker-service moderation |
+| POST | `/workers/:id/actions/ban` | `workers:ban` | worker-service moderation + clears featured + search reindex |
+| POST | `/workers/:id/actions/force-offline` | `workers:force-offline` | short moderation suspend (`FORCE_OFFLINE_MINUTES`, default 60) |
+| PATCH | `/workers/:id/actions/edit-contact` | `workers:edit` | SQL + worker cache invalidate + reindex |
+| POST | `/workers/:id/actions/feature` | `workers:feature` | SQL + invalidate + reindex |
+| POST | `/workers/:id/actions/badge` | `workers:badge` | SQL on `worker_badges` + invalidate + reindex |
+| POST | `/workers/:id/actions/request-reverification` | `workers:verify` | SQL + invalidate + reindex |
 
 ### 7.6 Worker verification
 
-| Method | Path | Permission | Description |
-|---|---|---|---|
-| GET | `/workers/verification?tab=pending|resubmitted|approved|rejected&search&city&categoryId&page&pageSize` | `workers:verify` | Queue (one CTE shared with counts). Pending tabs oldest first |
-| GET | `/workers/verification/counts` | verify | Tab counts + overdue 48 h / 72 h |
-| GET | `/workers/:id/verification` | verify | Everything for the review page: worker, documents, skills, CNIC duplicates, decision history, activity |
-| PATCH | `/workers/:id/verification/cnic` | verify | `{ cnicNumber }` 13 digits (dashes/spaces stripped), returns duplicates |
-| POST | `/workers/:id/verification/view` | verify | Logs "who looked at this profile" (once per admin per 10 min) |
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/workers/verification?tab=…`, `/workers/verification/counts` | queue (same SQL as counts) |
+| GET | `/workers/:id/verification` | review page data; **documents come from worker-service with signed URLs**; `documentsUnavailable: true` if that call fails |
+| PATCH | `/workers/:id/verification/cnic` | admin types the 13 digits, duplicate lookup |
+| POST | `/workers/:id/verification/view` | "who viewed" log |
+| POST | `/workers/:id/actions/approve-verification` | **worker-service `POST /internal/admin/workers/:id/verify`** (the identity-document, duplicate-CNIC and event logic live there) |
+| POST | `/workers/:id/actions/reject-verification` | worker-service reject; codes `ID_UNCLEAR`, `ID_MISMATCH`, `ID_EXPIRED`, `DUPLICATE_ACCOUNT`, `FAKE_DOCUMENT`, `OTHER` |
+| POST | `/workers/:id/actions/request-info` | records `info_requested` and sends the message as a push through the broadcast path (≤ 160 chars). Returns `notified` |
 
 ### 7.7 Bookings
 
-| Method | Path | Permission | Description |
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/bookings` | `bookings:view` | Filters: `search, status, city, categoryId, paymentStatus (paid|pending|refunded), hasDispute, amountMin/Max, dateFrom/To, sortBy (created_at, scheduled_at, amount, updated_at), sortDir` |
-| GET | `/bookings/board` | view | Kanban: 6 columns, 20 per column, terminal columns last 7 days |
-| GET | `/bookings/kpis` · `/export` | view | KPIs, CSV (max 20 000 rows, BOM) |
-| GET | `/bookings/:id` | view | Full detail incl. pricing snapshot, parties, latest dispute |
-| GET | `/bookings/:id/timeline` | view | `booking_status_history` (`available:false` if migration 008 missing) |
-| GET | `/bookings/:id/chat` | view | `messages` (max 1000) |
-| GET | `/bookings/:id/payment` | view | Booking money fields + up to 5 payment rows |
-| GET | `/bookings/:id/location` | view | Job site + worker GPS trail (see 21) |
-| GET, POST | `/bookings/:id/notes` | view / `bookings:note` | Internal notes (≤ 2000 chars) |
-| GET | `/bookings/:id/reassign-candidates?search=` | `bookings:reassign` | Verified, active workers with the skill, no overlapping booking (20 max) |
-| POST | `/bookings/:id/actions/cancel` | `bookings:cancel` | `{ reason, refundPercent 0–100 }` |
-| POST | `/bookings/:id/actions/override-status` | `bookings:override` | `{ toStatus, reason }`, forward-only |
-| POST | `/bookings/:id/actions/reassign` | `bookings:reassign` | `{ newWorkerId, reason }`. Returns `newBookingId` |
-| POST | `/bookings/:id/actions/escalate` | `bookings:escalate` | `{ reason }`. Opens a dispute |
+| GET | `/bookings`, `/board`, `/kpis`, `/export` | `bookings:view` | export audited |
+| GET | `/bookings/:id`, `/timeline`, `/chat`, `/payment`, `/notes` | view | |
+| GET | `/bookings/:id/location` | view | job site + **proof** (arrival, start, completion distances, start method, cash, photos); no GPS trail exists |
+| GET | `/bookings/:id/reassign-candidates` | `bookings:reassign` | verified, active, same skill, no overlap |
+| POST | `/bookings/:id/notes` | `bookings:note` | |
+| POST | `/bookings/:id/actions/cancel` | `bookings:cancel` | booking-service. `{ reason, refundPercent }`. **COD: percent of the platform fee waived** |
+| POST | `/bookings/:id/actions/override-status` | `bookings:override` | booking-service, forward only: PENDING→ACCEPTED, ACCEPTED→IN_PROGRESS, IN_PROGRESS→COMPLETED_BY_WORKER or COMPLETED, COMPLETED_BY_WORKER→COMPLETED |
+| POST | `/bookings/:id/actions/reassign` | `bookings:reassign` | booking-service. Same booking, back to PENDING (`newBookingId` = the booking id) |
+| POST | `/bookings/:id/actions/escalate` | `bookings:escalate` | booking-service opens the dispute (only COMPLETED_BY_WORKER) |
 
 ### 7.8 Disputes
 
-| Method | Path | Permission | Description |
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/disputes?tab=open|awaiting|escalated|resolved&…` | `disputes:view` | Filters: `search, city, categoryId, assigned (me|unassigned), resolution, amountMin/Max, dateFrom/To` |
-| GET | `/disputes/counts` | view | Tab counts, overdue 48/72 h, refunded amount (30 d) |
-| GET | `/disputes/refunds?source=dispute|everything&…` | view | Refunds view (same SQL as payments refunds) |
-| GET | `/disputes/:id` | view | Detail: booking, parties, evidence URLs, refunds, activity |
-| GET, POST | `/disputes/:id/notes` | view / `disputes:note` | Internal notes |
-| POST | `/disputes/:id/actions/assign` | `disputes:assign` | `{ action: claim|release }` |
-| POST | `/disputes/:id/actions/escalate` | `disputes:escalate` | `{ note }`. Marks `is_escalated`, clears assignment, **does not change `disputes.status`** |
-| POST | `/disputes/:id/actions/resolve` | `disputes:resolve` | `{ resolution: REFUND_GRANTED|NO_REFUND|PARTIAL_REFUND, refundAmount?, note, overrideWindow? }` |
+| GET | `/disputes`, `/counts`, `/refunds`, `/:id`, `/:id/notes` | view | |
+| POST | `/disputes/:id/notes` | `disputes:note` | |
+| POST | `/disputes/:id/actions/assign` | `disputes:assign` | SQL (admin-owned columns) |
+| POST | `/disputes/:id/actions/escalate` | `disputes:escalate` | SQL, does not change `disputes.status` |
+| POST | `/disputes/:id/actions/resolve` | `disputes:resolve` | admin checks (escalation, 24 h worker window, `overrideWindow`) then **booking-service resolves** (status, money fields, events, notifications) |
 
 ### 7.9 Payments (read-mostly, money moves through payment-service)
 
-| Method | Path | Permission | Description |
-|---|---|---|---|
-| GET | `/payments/overview?period=mtd|ytd` | `payments:view` | Gross, fees, payouts, escrow, refunds, wallets, method split, attention counters |
-| GET | `/payments/revenue?days=30|90` | view | Daily chart + by city |
-| GET | `/payments/transactions` | view | Unified ledger: every payment + completed COD bookings. Returns `totals` |
-| GET | `/payments/payouts` | view | `worker_payouts` (destinations masked to last 4) |
-| GET | `/payments/refunds` | view | `refunds` list |
-| POST | `/payments/refunds` | `payments:refund` | `{ paymentId, amount, reason }` → payment-service `POST /internal/refunds` (`ADMIN_MANUAL_REFUND`) |
-| POST | `/payments/payouts/:id/retry` | `payments:payout` | FAILED payouts only → payment-service `POST /internal/payouts/:id/retry` |
-| GET | `/payments/reports?type=monthly-revenue|transactions|payouts|tax-summary|city-value&dateFrom&dateTo` | `payments:export` | CSV (max 20 000 rows). Audited. Payout destinations are not exported |
+`GET /payments/overview`, `/revenue`, `/transactions`, `/payouts`, `/refunds`, `/reports` (CSV, audited); `POST /payments/refunds`, `POST /payments/payouts/:id/retry` (payment-service). Unchanged.
 
 ### 7.10 Reviews
 
-| Method | Path | Permission | Description |
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/reviews?tab=flagged|all&…` | `reviews:view` | Filters: `search, rating, city, categoryId, status, signal (short_one_star|burst_one_star), workerId, userId, dateFrom/To` |
-| GET | `/reviews/counts` | view | Flagged, auto/admin hidden, totals, 30-day average, sparkline |
-| GET | `/reviews/audit?flag=low_rating|rapid_drop|many_disputes&city&search` | view | Worker rating audit |
-| GET | `/reviews/:id` | view | Detail: reviewer stats, worker, reports, activity |
-| GET, POST | `/reviews/:id/notes` | view / `reviews:note` | Internal notes |
-| POST | `/reviews/:id/actions/moderate` | `reviews:moderate` | `{ action: hide|restore|dismiss, note }` |
+| GET | `/reviews`, `/counts`, `/audit`, `/:id`, `/:id/notes` | view | |
+| POST | `/reviews/:id/notes` | `reviews:note` | |
+| POST | `/reviews/:id/actions/moderate` | `reviews:moderate` | **review-service `PATCH /internal/reviews/:id/moderate`**; it emits `review.moderated`, so ratings and search update. The panel also resolves the open reports |
 
 ### 7.11 Notifications
 
-| Method | Path | Permission | Description |
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/notifications/kpis` | `notifications:view` | Campaigns 30 d, sending, failed, recipients, delivery rate |
-| GET | `/notifications/campaigns` · `/campaigns/:id` | view | History + per-channel delivery breakdown, feed read count, top errors |
-| POST | `/notifications/audience/estimate` | `notifications:send` | `{ audience, category }` → segment count, push reach, SMS reach, sample of 5 |
-| POST | `/notifications/audience/resolve` | send | Phones / emails / UUIDs → recipient IDs (max 500) |
-| POST | `/notifications/broadcasts` | send | Launch (see 8.8). Responds `202` but runs synchronously |
-| POST | `/notifications/test-send` | send | One recipient, always category `platform` |
+| GET | `/notifications/kpis`, `/campaigns`, `/campaigns/:id` | view | |
+| POST | `/notifications/audience/estimate`, `/audience/resolve` | send | |
+| POST | `/notifications/broadcasts` | send | **gateway side door → notification-service**; returns `202 { campaignId, status }` immediately; all-users / all-workers need `notifications:broadcast-all` |
+| POST | `/notifications/test-send` | send | same path; `pushDelivered` / `pushFailed` are `null` (result is in History) |
 
-### 7.12 Map, Analytics, Catalog
+### 7.12 Map, Analytics, Catalog, Settings
 
-| Method | Path | Permission | Description |
+`GET /map/workers`, `/map/bookings`, `/map/demand`; `GET /analytics/{kpis,growth,funnels,cities,categories}`; categories and services CRUD (every write calls worker-service `/internal/cache/invalidate`).
+
+| Method | Path | Permission | Notes |
 |---|---|---|---|
-| GET | `/map/workers?city&categoryId&includeOffline` | `map:view` | Up to 3000 workers with a GPS row, plus counts by presence |
-| GET | `/map/bookings?status&city&categoryId` | map | ACCEPTED and IN_PROGRESS jobs with job-site and worker position (max 1000) |
-| GET | `/map/demand?hours=6|24|72|168&categoryId` | map | Heatmap cells. Falls back to booking locations when `search_demand_log` is empty |
-| GET | `/analytics/kpis` | `analytics:view` | DAU, DAW, completion, avg value, acceptance, 7-day retention |
-| GET | `/analytics/growth?days=7|30|90` | analytics | Daily series + 7-day MA + city trend (top 6 + "Other") |
-| GET | `/analytics/funnels?days=` | analytics | User and worker funnels |
-| GET | `/analytics/cities?days=` · `/categories?days=` | analytics | Performance tables |
-| GET | `/categories` · `/categories/kpis` · `/categories/:id` | `categories:view` | List, KPIs, detail |
-| POST | `/categories` | `categories:create` | `id` slug 3–50 chars `[a-z0-9-]`, immutable after creation. `409` if it exists |
-| PATCH | `/categories/:id` | `categories:edit` | name, nameUr, iconUrl, parentId, sortOrder |
-| POST | `/categories/:id/actions/toggle-active` | categories:edit | `{ isActive }` |
-| GET | `/categories/:id/services` | categories:view | Services of a category |
-| POST | `/categories/:id/services` | `services:edit` | `priceType` fixed / hourly / quote (quote → `base_price = NULL`) |
-| PATCH | `/categories/:id/services/:serviceId` | services:edit | Update |
-| POST | `/categories/:id/services/:serviceId/actions/toggle-active` | services:edit | `{ isActive }` |
-| GET | `/pricing-config` | `settings:view` | Global multipliers |
-| PATCH | `/pricing-config` | `settings:edit` | All six numeric fields required |
+| GET / PATCH | `/pricing-config` | `settings:view` / `settings:edit` | `{ customerFeePercent, workerCommissionPercent, platformFeePercent (total, informational), demandThreshold, demandMultiplier, urgencySameDayMultiplier, urgencyWithin2hMultiplier, offPeakMultiplier }`. Validated ranges. Legacy payload with only `platformFeePercent` is split half / half. **booking-service reads it** |
+| GET / POST | `/admins` | `admin_users:manage` | list / create |
+| PATCH | `/admins/:id` | manage | `{ role?, isActive? }` |
+| POST | `/admins/:id/reset-mfa`, `/admins/:id/logout-all` | manage | |
 
 ---
 
@@ -711,291 +527,226 @@ Base path: `/api/admin`. Auth: httpOnly cookie. All unsafe methods also pass the
 
 ### 8.1 Dashboard
 
-Five widgets, 30 s SWR refresh. "Needs attention" thresholds are hard-coded in `get_needs_attention()`: dispute unresolved > 24 h (OPEN, WORKER_RESPONDED, UNDER_REVIEW), verification pending > 48 h, any FAILED payment, booking PENDING > 30 min, any review with an unresolved report. Revenue KPIs use `payments` (HELD/RELEASED); the chart uses `bookings.created_at` of completed bookings, while Finance dates revenue by **completion** time. The three can differ for the same day.
+30 s SWR refresh. Revenue today / yesterday / sparkline and the revenue chart all use completed bookings by completion time (Karachi), the same basis as Finance. Needs-attention thresholds are fixed in `get_needs_attention()` (section 4.4).
 
 ### 8.2 Users
 
-Status is derived: `deleted > banned > suspended (until > now) > active (is_active) > inactive`. Suspend sets `is_active=false` so auth-service stops login; ban does the same. `unsuspend` sets `is_active=true` (a banned user still reads as banned because `banned_at` stays set). There is no "unban" action. Edit-contact changes the phone, which is the user's **login identity** in auth-service.
+Status is derived: `deleted > banned > suspended > active > inactive`. Suspend and ban set `is_active=false`. After every moderation write the panel deletes `user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` so other services see it immediately. Access tokens issued earlier live up to 15 min (no `jti` blacklist yet). There is no unban. Edit-contact changes the login phone.
 
 ### 8.3 Workers
 
-- Same derived status plus **presence** (`online`, `away`, `on_job`, `paused`, `offline`).
-- Rating buckets only count workers with reviews (a new worker with `avg_rating = 0` is "unrated", never "below 3").
-- Featured: only VERIFIED and not banned; banning, rejecting or requesting re-verification clears it.
-- Badges `top_rated`, `background_verified` are admin-awarded rows in `worker_badges`. (worker-service doc lists `top_rated` automation as pending and also awards `background_verified` from approved police clearance; both write the same table.)
+Derived status plus presence. Moderation (suspend, unsuspend, ban, force-offline) goes through worker-service, which writes the columns, clears worker, chat and contact caches and emits `worker.moderation_changed`; search drops the worker within seconds. Featured only for VERIFIED, non-banned workers. Badges `top_rated`, `background_verified` are rows in `worker_badges`.
 
 ### 8.4 Worker verification
 
-Queue tabs (30-day window for decided tabs): `pending` (PENDING_REVIEW, first submission), `resubmitted` (PENDING_REVIEW with any past rejection or a re-verification request), `approved`, `rejected`. SLA badge: amber ≥ 48 h, red ≥ 72 h since the oldest PENDING document.
-
-**Approve** (single transaction, row lock on the worker):
-1. Worker must be `PENDING_REVIEW` and not banned.
-2. Must have an identity document that is not rejected (**currently `NATIONAL_ID` or `PASSPORT`**, see 21).
-3. If a CNIC is stored, no other non-deleted worker may share it.
-4. All PENDING documents → APPROVED; worker → VERIFIED (`verified_at/by`); decision row; outbox `worker.verified`.
-
-**Reject:** reason code (6 values) + note (≤ 1000) + `allowResubmission` (default true). Every PENDING document gets the note as `rejection_note` (worker-service already returns it to the app). Worker → REJECTED, featured cleared, outbox `worker.rejected`.
-
-**Request info:** records an `info_requested` decision and outbox event; status stays PENDING_REVIEW.
-
-**CNIC:** admin types the 13-digit number from the image; the save endpoint runs the duplicate lookup and returns the other accounts.
+Queue tabs `pending`, `resubmitted`, `approved`, `rejected` (decided tabs show the last 30 days). SLA: amber ≥ 48 h, red ≥ 72 h. **Approve and reject are decided by worker-service**, so the admin panel and the worker app can no longer disagree about the required documents (CNIC front + back, business registration for companies), duplicate CNIC, or rejection codes. The panel shows documents with 15-minute signed URLs and logs every access. Request-info sends the worker a push.
 
 ### 8.5 Bookings
 
-Board columns: `pending`, `accepted`, `in_progress`, `completed_by_worker`, `completed` (COMPLETED + AUTO_COMPLETED), `cancelled_disputed` (CANCELLED, REJECTED, DISPUTED, REFUNDED, RESOLVED). City = `COALESCE(job address city, worker city)` because bookings has no city column. Payment status is derived: refund_amount > 0 → `refunded`; `is_payment_confirmed` → `paid`; else `pending`.
+Board columns `pending`, `accepted`, `in_progress`, `completed_by_worker`, `completed`, `cancelled_disputed`. City = job address city, else worker city. Payment status derived from refund amount and `is_payment_confirmed`.
 
-| Action | Allowed from | Effect |
+| Action | Allowed from | Effect (done by booking-service) |
 |---|---|---|
-| **Cancel** | PENDING, ACCEPTED, IN_PROGRESS | `CANCELLED`, `cancelled_by='admin'`, `refund_amount = total × pct / 100`, outbox `booking.cancelled`, notifications to both parties (if enabled) |
-| **Override status** | PENDING→ACCEPTED, ACCEPTED→IN_PROGRESS, IN_PROGRESS→COMPLETED, COMPLETED_BY_WORKER→COMPLETED | Forward only. Sets `started_at` / `completed_at`. COMPLETED also emits `booking.payment_release`. `COMPLETED_BY_WORKER` is deliberately not a target (needs booking-service's 24 h auto-complete job) |
-| **Reassign** | PENDING, ACCEPTED | New PENDING booking for the new worker (same pricing snapshot, 30 min expiry), old booking CANCELLED with 0 refund. New worker must be verified, active and have the category skill. Exclusion-constraint violation (`23P01`) → `409` |
-| **Escalate** | COMPLETED_BY_WORKER only | Inserts a dispute (`[Opened by admin] …`), booking → DISPUTED. A second open dispute hits the partial unique index → `409` |
+| **Cancel** | PENDING, ACCEPTED, IN_PROGRESS | `CANCELLED`, `cancelled_by='admin'`, waived percent of the fee, BullMQ jobs removed, worker `is_on_job` re-synced, no strikes, `booking.cancelled` event |
+| **Override status** | see table in 7.7 | forward only; COD settlement runs on `→ COMPLETED`; company providers must accept themselves |
+| **Reassign** | PENDING, ACCEPTED | same booking, new worker, status `PENDING`, tiered response window, `booking.reassigned` event |
+| **Escalate** | COMPLETED_BY_WORKER | opens a dispute for the customer, `booking.disputed` event |
 
-Every action: `setActor()` tags the transaction (`app.actor`), the booking row is locked, the outbox row is written in the same transaction, the audit log entry is written after commit. Refund helper `standardRefundPercent` (PENDING 100, ACCEPTED > 24 h 90, ≤ 24 h 50, else 0) is a UI suggestion only; the admin picks the percentage.
+The panel shows "fee waiver %" for COD. Every action is audited with the reason.
 
 ### 8.6 Disputes
 
-Tabs: **open** = active, not escalated, not still waiting for the worker; **awaiting** = status OPEN, no worker response, created < 24 h ago; **escalated** = active + `is_escalated`; **resolved** = RESOLVED/CLOSED in the last 30 days.
-
-- **Claim / release:** an escalated dispute can only be claimed by SUPER_ADMIN; another admin's claim blocks others unless SUPER_ADMIN.
-- **Escalate:** needs a note; clears assignment; SUPER_ADMIN picks it up.
-- **Resolve** (transaction; lock order **booking → dispute**, same as booking-service):
-  - booking must be `DISPUTED`;
-  - escalated disputes: SUPER_ADMIN only;
-  - still inside the worker's 24 h response window → blocked (`409`) unless `overrideWindow: true` (logged);
-  - the **server** computes the money: `REFUND_GRANTED` = full total, `NO_REFUND` = 0, `PARTIAL_REFUND` must be > 0 and < total;
-  - dispute → RESOLVED; booking → `REFUNDED` (any refund) or `RESOLVED` (no refund);
-  - outbox `booking.dispute_resolved` (payment-service consumes it); notifications to both parties.
+Tabs: **open** (needs a decision), **awaiting** (worker still has 24 h), **escalated**, **resolved** (30 days). Claim / release and escalate are admin-owned SQL. **Resolve:** admin checks (escalated needs SUPER_ADMIN, 24 h window needs `overrideWindow`), then booking-service decides the money (`REFUND_GRANTED` = full total waived, `NO_REFUND` = 0, `PARTIAL_REFUND` strictly between 0 and the total), moves the booking to `REFUNDED` or `RESOLVED`, and emits `booking.dispute_resolved` plus notifications.
 
 ### 8.7 Payments & finance
 
-The panel **never writes payment tables**. Revenue is counted from completed bookings (`COMPLETED`, `AUTO_COMPLETED`) by completion time, because COD bookings have no `payments` row until booking-service settles them. Ledger status = `payments.status`, or `COD_COLLECTED` when a completed booking has no payment row; method = `COALESCE(payments.method, 'COD')`.
+The panel never writes payment tables. Revenue = completed bookings by completion time; ledger status = `payments.status` or `COD_COLLECTED`. Manual refund re-validated against the payment, then forwarded to payment-service. Destinations masked to the last 4; CSV formula-injection guard.
 
-- Manual refund checks: payment exists, status in `HELD | RELEASED | PARTIALLY_REFUNDED`, amount ≤ gross − sum(non-failed refunds). payment-service creates the refund and calls the gateway.
-- Destinations (phone, IBAN) are masked to the last 4 characters before they leave the server and are not in CSV exports.
-- CSV cells starting with `= + - @` are prefixed with `'` (formula injection guard).
-
-### 8.8 Notifications (direct broadcast)
+### 8.8 Notifications
 
 ```
 POST /notifications/broadcasts
-  ├─ permission notifications:send; segments all_users / all_workers need notifications:broadcast-all
-  ├─ parse + validate: campaign label, audience, channels (push, sms), message (template or custom), category
-  ├─ duplicate guard: same template_key launched in the last 35 s → 429
-  └─ launchDirectBroadcast()
-       ├─ resolve recipients with SQL (all_users, all_workers, category_city = verified workers with the skill in a city, custom_ids)
-       ├─ INSERT broadcast_campaigns (status SENDING)
-       ├─ for each recipient, sequentially:
-       │     INSERT notifications (in-app feed row)
-       │     if channel push: no fcm_token → counted as noToken
-       │                       else sendDirectPush() → INSERT notification_deliveries (SENT / FAILED)
-       │                       dead token (not-registered) → fcm_token = NULL on users/workers
-       └─ UPDATE broadcast_campaigns SET status COMPLETED, sent_count, completed_at
+  ├─ permission; all_users / all_workers need notifications:broadcast-all
+  ├─ validate label, audience, channels, message (catalog template or custom), category
+  ├─ duplicate guard: same template_key within 35 s → 429
+  └─ launchBroadcast() → gateway side door → notification-service
+        (creates the campaign, applies opt-outs and quiet hours, sends push and SMS in the background)
 ```
-
-- Messages come from `lib/notification-catalog.ts` (18 templates, English + Roman Urdu, variables validated) or a custom message (title ≤ 65, push body ≤ 178, SMS body ≤ 150, deep link `tasklync://…`).
-- Quiet hours (22:00–08:00 Karachi) are a UI warning (`acknowledgeQuietHours`), not a server block.
-- `scripts/generate-broadcast-templates.ts` writes push JSON and SMS `.hbs` files into `generated-templates/`; copy them into notification-service if you still want it to send the same templates.
-- **Important:** the engine sends **push only**. SMS is accepted as a channel but nothing sends it, and recipients' `notification_preferences` are not consulted. See 21.
+Templates come from `lib/notification-catalog.ts` (18 templates, English + Roman Urdu); `scripts/generate-broadcast-templates.ts` writes the files for notification-service. The panel holds **no Firebase credentials**.
 
 ### 8.9 Reviews
 
-Moderation transitions (`lib/review-constants.ts`): `hide` → `ADMIN_HIDDEN` from VISIBLE, AUTO_HIDDEN, ADMIN_RESTORED; `restore` → `ADMIN_RESTORED` from AUTO_HIDDEN, ADMIN_HIDDEN; `dismiss` ("keep review") → `ADMIN_RESTORED` from AUTO_HIDDEN, no change otherwise. Every action resolves the open reports of that review. A review with nothing to change and no open report returns `409`. Public statuses: `VISIBLE` and `ADMIN_RESTORED`.
-
-Extra signals computed in SQL (not in review-service): `short_one_star` (rating 1, comment < 20 chars) and `burst_one_star` (same user gave ≥ 2 workers a 1-star within ±24 h).
-
-Rating audit flags (visible reviews only): `low_rating` (avg < 3.5, ≥ 3 reviews), `rapid_drop` (7-day drop > 0.5), `many_disputes` (≥ 3 disputes in 30 days).
+hide → `ADMIN_HIDDEN`, restore → `ADMIN_RESTORED`, dismiss = keep (auto-hidden review restored). The transition is checked in the panel, executed by review-service, which emits `review.moderated` so `workers.avg_rating` and the search index follow. Signals `short_one_star`, `burst_one_star`; rating audit flags `low_rating`, `rapid_drop`, `many_disputes`.
 
 ### 8.10 Live map
 
-SWR polling, no WebSocket: workers 5 s, jobs 15 s, demand 60 s. Offline workers are hidden by default. Colors per presence in `map-constants.ts`. Demand = searches (or bookings as fallback) per ~2 km cell; `unserved = max(demand − supply × 2, 0)` where supply = online verified workers in the cell. Optional Redis overlay (`MAP_USE_REDIS_LOCATION=true`) replaces the DB position with `worker:location:{id}` when it is fresher.
+Polling: workers 5 s, jobs 15 s, demand 60 s. Demand uses `search_demand_log` and falls back to booking locations while search-service does not write the log (the search service currently produces no demand events, audit M-01).
 
 ### 8.11 Analytics
 
-Windows: 7 / 30 / 90 days, 60 s refresh. DAU / DAW are rolling 24 h; completion, acceptance and average value use fixed 7-day windows against the previous 7 days; retention = share of users whose first booking fell in the previous window and who booked again within 7 days. Funnels count people **registered** in the window, and each stage is a subset of the previous one.
+7 / 30 / 90 days, 60 s refresh. DAU and DAW rolling 24 h; completion, acceptance and value use fixed 7-day windows; retention = booked again within 7 days of the first booking.
 
 ### 8.12 Categories & pricing
 
-Category `id` is an immutable slug. `quote` services have no base price. The pricing config (`platform_pricing_config`) is a singleton edited here; **booking-service does not read it yet** (see 21).
+Category `id` is an immutable slug. **Settings → Pricing** edits the customer fee, worker commission, demand and urgency multipliers; booking-service picks the change up within about 60 seconds and validates it, and existing bookings keep their price. The off-peak multiplier is stored but not applied by booking-service yet.
 
 ---
 
 ## 9. Cross-Service Contract
 
-### 9.1 Integration style per service
+### 9.1 Integration per service
 
-| Service | Integration | Details |
+| Service | How the panel integrates | Detail |
 |---|---|---|
-| auth-service | Shared columns | `users` ban / suspend / `is_active` / `deleted_at` enforced at login and refresh. No HTTP call, so existing refresh sessions in Redis are **not** killed when you ban someone (they die at the next refresh, ≤ 15 min, because auth-service re-checks status) |
-| user-service | Shared columns + cache | Same status columns. user-service caches status 60 s in `user:status:{id}` and expects the admin panel to `DEL` it |
-| worker-service | Shared columns + cache | Same. `worker:status:{id}` (60 s) must be deleted after ban / suspension |
-| booking-service | Direct writes + outbox | Cancel, override, reassign, escalate, dispute resolve update `bookings` / `disputes` in the admin's own transaction and queue `booking.events` |
-| payment-service | HTTP (`x-internal-key`) | Refund + payout retry. Reads its tables. Consumes `booking.dispute_resolved` |
-| review-service | Direct writes | Moderation writes `reviews` directly and deletes two Redis keys |
-| notification-service | Replaced | Broadcasts no longer go through the gateway (ADR-009) |
-| search-service | Table | Must INSERT into `search_demand_log` (lat, lng, category_id, result_count) |
-| chat-service | Read | `messages` for the booking chat tab |
+| auth-service, user-service | shared columns + Redis | `users` ban / suspend / `is_active` enforced at login and refresh. The panel deletes `user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` |
+| worker-service | **internal API** + shared columns | `/internal/admin/*` for verification and moderation; `/internal/cache/invalidate` after catalog and worker changes |
+| booking-service | **internal API** | `/internal/admin/*` (section 7.7, 7.8). booking-service emits the events |
+| review-service | **internal API** | `PATCH /internal/reviews/:id/moderate` |
+| search-service | internal API | `POST /internal/reindex/:workerId` after SQL changes (feature, badge, contact, re-verification) |
+| payment-service | HTTP | refunds, payout retry; reads its tables |
+| notification-service | gateway side door | broadcasts and tests |
+| chat-service | read | `messages` for the booking chat tab |
 
-### 9.2 Outbox events produced
+### 9.2 Contract assumptions (confirm against the other services' docs)
 
-Written to `admin_event_outbox` inside the same transaction as the state change. Envelope matches booking-service: `{ event_type, booking_id, user_id, worker_id, status, timestamp, data: { …, triggered_by: 'admin', admin_email } }`.
+| Assumption | Where it lives |
+|---|---|
+| worker-service `verify`, `reject`, `moderation`, `documents/:docId/review`, `verification/meta`, `verification` summary with signed URLs, `cache/invalidate`: body field names | `lib/services/worker.ts` |
+| review-service moderate body `{ action, note, admin_id }` | `lib/services/review.ts` |
+| search-service reindex route | `lib/services/search.ts` |
+| booking-service `/internal/admin/*` (defined by booking v3.1.0) | `lib/services/booking.ts` |
 
-| Topic | Event | Trigger |
-|---|---|---|
-| `booking.events` | `booking.cancelled` | admin cancel, reassign (old booking) |
-| | `booking.created` | reassign (new booking), `data.reassigned_from_booking_id` |
-| | `booking.accepted`, `booking.started`, `booking.completed` | override status |
-| | `booking.payment_release` | override to COMPLETED |
-| | `booking.disputed` | escalate booking |
-| | `booking.dispute_resolved` | resolve dispute |
-| `worker.events` | `worker.verified`, `worker.rejected`, `worker.verification_info_requested` | verification decisions |
-| `notification.send` | `notification.send` | only when `ADMIN_BOOKING_NOTIFICATIONS=true` (templates `booking_cancelled_by_admin`, `booking_request_received`, `booking_reassigned`, `dispute_resolved` must exist first) |
+A mismatch is a one-line fix in the wrapper; the routes do not change.
 
-> **No process publishes this outbox.** Migration 007 names `scripts/publish-outbox.ts`; the file is not in the repository. Until it exists, other services never see these events. See 21 (item 1).
+### 9.3 Admin events
 
-### 9.3 Backend contract (what other teams must do)
+The panel produces **no Kafka events** any more. `admin_event_outbox` is deprecated and unused. The owning service emits the events for every action listed above.
+
+### 9.4 What other teams must do
 
 | Team | Required |
 |---|---|
-| auth / user / worker | Keep reading `banned_at`, `suspended_until`, `is_active`, `deleted_at` (they do). Do not rename those columns |
-| booking | Consume the admin outbox events like its own. Read `platform_pricing_config` (env fallback). Treat admin-made cancels/refunds like its own (worker `is_on_job` re-sync, BullMQ job cleanup) |
-| payment | Consume `booking.dispute_resolved`; expose `/internal/refunds` and `/internal/payouts/:id/retry` (exist) |
-| review | Expose or accept the admin moderation as an event (`review.moderated`) so `workers.avg_rating` updates |
-| search | Write `search_demand_log` |
-| worker | Publish `worker.location` history if the booking trail is wanted; align KYC document types and rejection codes (section 21) |
-| mobile | Handle `worker.rejected` info; deep links used by broadcasts (confirm real `tasklync://` paths) |
+| booking | v3.1.0 deployed first; reads `platform_pricing_config`; emits events for admin actions |
+| worker | confirm the internal admin contract; consume `booking.reassigned` with `old_worker_id` / `new_worker_id`; keep `worker_badges` / `worker_verification_reviews` schema |
+| review | confirm the moderate body; emit `review.moderated` |
+| search | confirm `/internal/reindex/:id` |
+| notification | dispute and admin templates; keep the gateway side door |
+| payment | COD `refund_kind = FEE_WAIVER` moves no money; confirm port (3017 vs 3005) |
+| all services | DB roles must bypass RLS |
 
 ---
 
 ## 10. Security
 
-### Controls
-
 | Area | Control |
 |---|---|
-| Transport / headers | HSTS (1 y), `X-Frame-Options: DENY`, `nosniff`, strict referrer, empty Permissions-Policy, `poweredByHeader` off. `Cache-Control: no-store` on `/auth/*` and `/api/admin/*` |
-| CSRF | SameSite=Lax cookies **plus** Origin = Host check on every unsafe `/api/*` call (middleware). Requests without an `Origin` header (non-browser) pass but still need the cookies |
-| Authn | Password + mandatory TOTP, trusted devices, lockout, per-IP and per-email rate limits, constant-time dummy hash, generic error text |
-| Authz | Permission per route, checked server-side with Redis session. Session scope `mfa_setup` can reach nothing but MFA enrolment |
-| Sessions | Rotating refresh tokens, theft detection, 3 sessions max, absolute expiry, deactivation kills all sessions |
-| Secrets at rest | TOTP AES-256-GCM, backup codes HMAC, passwords bcrypt, refresh/device secrets hashed |
-| Input | `zod` on auth routes; UUID check on `:id` for workers, bookings, disputes, reviews, payouts, campaigns; whitelists for sort columns, enums, tabs; free text is always bound as `$n` parameters |
-| SQL | Parameterised everywhere. The only interpolated values are whitelisted constants (sort columns, thresholds, table names chosen from `users`/`workers`) |
-| Open redirect | `safeNextPath()` allows only same-site relative paths, never `/auth` or `/api/` |
-| PII | Payout / refund destinations masked; CNIC documents behind `workers:verify`; CSV formula-injection guard on finance exports |
-| Audit | Every admin mutation writes `admin_audit_log` with admin, IP, user agent, old/new value, reason |
-| Bot noise | Waitlist stats classify Postman/curl/etc. as bots |
+| Transport / headers | HSTS (1 y), `X-Frame-Options: DENY`, `nosniff`, strict referrer, empty Permissions-Policy, `Cache-Control: no-store` on `/auth/*` and `/api/admin/*` |
+| CSRF | SameSite=Lax cookies plus Origin = Host check on every unsafe `/api/*` call |
+| Authn | Password + mandatory TOTP, trusted devices, lockout, per-IP and per-email limits, constant-time dummy hash |
+| Authz | Permission per route with Redis session; `mfa_setup` scope reaches nothing else |
+| Sessions | Rotating refresh, theft detection, 3 sessions, deactivation / role change / MFA reset kill sessions at once |
+| Secrets at rest | TOTP AES-256-GCM, backup codes HMAC, passwords bcrypt, refresh and device secrets hashed |
+| Service-to-service | `X-Internal-Key` per target service (own variable, fallback `INTERNAL_API_KEY`), read at call time, never sent to the browser |
+| Input | UUID guard for ids in middleware; zod on auth routes; whitelists for sort columns, enums, tabs; all values bound as `$n` |
+| SQL | Parameterised; interpolated values are whitelisted constants only |
+| DB | TLS verified when `DATABASE_CA_CERT` is set; RLS on admin tables |
+| PII | Payout / refund destinations masked; **KYC images only as 15-minute signed URLs and every access logged**; CSV formula-injection guard on finance exports |
+| Audit | Every mutation writes `admin_audit_log`; all exports audited |
+| Removed | Impersonation endpoint (410), direct Firebase credentials, Supabase keys from `.env.example` |
 
-### Known limits (summary, details in 21)
+### Known limits
 
-- Impersonation is the most sensitive endpoint and has no consumer defined here.
-- DB TLS uses `rejectUnauthorized: false` (encrypts, does not verify the server certificate).
-- `getClientIp` trusts `x-real-ip` / `x-forwarded-for`; it is only safe behind a proxy that overwrites them. Per-account lockout does not depend on it.
-- Audit log entries are written **after** the action commits; a failure there returns 500 for an action that did happen.
-- Rate limiting is only applied to the auth endpoints, not to the data APIs.
-- Many handlers (users, categories, waitlist) do not validate the `:id` as a UUID; invalid ids end in a SQL error (`500`).
-- Free-text fields (notes, reasons) are stored as typed; the UI must render them as text.
+- `getClientIp` trusts `x-real-ip` / `x-forwarded-for`: only safe behind a proxy that overwrites them (per-account lockout does not depend on it).
+- Audit entries are written after the action. If the audit insert fails the action still stands and the full entry is printed to stderr (`[audit] FAILED …`) for recovery.
+- Rate limiting is applied to auth endpoints only, not to the data APIs.
+- Banned users keep a valid access token for up to 15 minutes.
+- Free-text fields are stored as typed; the UI must render them as text.
 
 ---
 
 ## 11. Configuration & Environment Variables
 
-`.env.example` in the repo lists only part of what the code reads. This is the complete list found in the code.
-
 ### Core (required)
 
 | Variable | Notes |
 |---|---|
-| `DATABASE_URL` | Shared Supabase Postgres. The sample file shows a database called `tasklync_admin`, but all migrations assume the shared database |
-| `REDIS_URL` | Redis ≥ 6.2 (uses `GETDEL`) |
-| `ADMIN_JWT_SECRET` | ≥ 32 bytes. Generate: `node -e "console.log(require('crypto').randomBytes(48).toString('base64'))"` |
-| `ADMIN_MFA_ENCRYPTION_KEY` | 32 bytes base64: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `DATABASE_URL` | the **shared** Supabase database |
+| `DATABASE_CA_CERT` | Supabase root CA (PEM, `\n`-escaped PEM or base64). Without it TLS is encrypted but not verified |
+| `REDIS_URL` | Redis ≥ 6.2; must be the **same Redis** other services use (user / chat cache keys) |
+| `ADMIN_JWT_SECRET` | ≥ 32 bytes |
+| `ADMIN_MFA_ENCRYPTION_KEY` | 32 bytes base64 |
 | `NEXT_PUBLIC_ADMIN_URL` | `https://admin.tasklync.pk` |
 
-### Auth tuning (all optional, defaults shown)
+### Auth tuning (optional)
+
+`ADMIN_ACCESS_TOKEN_TTL` 900, `ADMIN_SESSION_REMEMBER_TTL` 604800, `ADMIN_SESSION_SHORT_TTL` 28800, `ADMIN_TRUSTED_DEVICE_TTL` 604800, `ADMIN_MFA_TEMP_TOKEN_TTL` 300, `ADMIN_REFRESH_GRACE_SECONDS` 20, `ADMIN_MAX_FAILED_ATTEMPTS` 5, `ADMIN_LOCKOUT_MINUTES` 30, `ADMIN_MAX_CONCURRENT_SESSIONS` 3, `ADMIN_MFA_REQUIRED` true.
+
+### Other services
+
+| Variable | Used for |
+|---|---|
+| `INTERNAL_API_KEY` | fallback key for every service below |
+| `BOOKING_SERVICE_URL`, `BOOKING_SERVICE_INTERNAL_KEY` | booking actions (`:3004`) |
+| `WORKER_SERVICE_URL`, `WORKER_SERVICE_INTERNAL_KEY` | verification, moderation, cache (`:3003`) |
+| `REVIEW_SERVICE_URL`, `REVIEW_SERVICE_INTERNAL_KEY` | review moderation (`:3007`) |
+| `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_INTERNAL_KEY` | reindex (`:3008`) |
+| `PAYMENT_SERVICE_URL`, `PAYMENT_SERVICE_INTERNAL_KEY` | refunds, payout retry (confirm port 3017 vs 3005) |
+| `API_GATEWAY_URL`, `GATEWAY_ADMIN_KEY` | broadcasts (gateway side door) |
+
+### Behaviour
 
 | Variable | Default |
 |---|---|
-| `ADMIN_ACCESS_TOKEN_TTL` | `900` |
-| `ADMIN_SESSION_REMEMBER_TTL` | `604800` (7 d) |
-| `ADMIN_SESSION_SHORT_TTL` | `28800` (8 h) |
-| `ADMIN_TRUSTED_DEVICE_TTL` | `604800` |
-| `ADMIN_MFA_TEMP_TOKEN_TTL` | `300` |
-| `ADMIN_REFRESH_GRACE_SECONDS` | `20` |
-| `ADMIN_MAX_FAILED_ATTEMPTS` | `5` |
-| `ADMIN_LOCKOUT_MINUTES` | `30` |
-| `ADMIN_MAX_CONCURRENT_SESSIONS` | `3` |
-| `ADMIN_MFA_REQUIRED` | `true` (only the literal `false` disables it) |
+| `FORCE_OFFLINE_MINUTES` | `60` |
+| `MAP_USE_REDIS_LOCATION` | `false` |
+| Mapbox token | variable name to confirm in `components/map/MapView.tsx` |
 
-### Integrations (read by code, **missing from `.env.example`**)
+### Removed
 
-| Variable | Used by | Needed for |
-|---|---|---|
-| `PAYMENT_SERVICE_URL`, `PAYMENT_SERVICE_INTERNAL_KEY` | `lib/payment-service.ts` | Manual refund, payout retry (503 if unset) |
-| `FCM_SERVICE_ACCOUNT_JSON_BASE64` (aliases: `FIREBASE_SERVICE_ACCOUNT_JSON_BASE64`, `FIREBASE_SERVICE_ACCOUNT`, `FCM_SERVICE_ACCOUNT_JSON`) | `lib/firebase-admin.ts` | Push. Alternative: `FIREBASE_PRIVATE_KEY` + `FIREBASE_CLIENT_EMAIL`, or a local `service-account.json` (dev only) |
-| `FCM_PROJECT_ID` (alias `FIREBASE_PROJECT_ID`) | firebase-admin | Defaults to `tasklync-6e7ae` |
-| `IMPERSONATION_JWT_SECRET`, `NEXT_PUBLIC_APP_URL` | impersonate route | The route crashes (`!` non-null assertions) when unset |
-| `ADMIN_BOOKING_NOTIFICATIONS` | `bookings-api.ts` | `true` to queue `notification.send` outbox rows |
-| `MAP_USE_REDIS_LOCATION` | `map-api.ts` | `true` to overlay Redis GPS on the map |
-| Mapbox access token | map component (not read in this review) | Live map. Confirm the variable name in `components/map/MapView.tsx` |
-| `API_GATEWAY_URL`, `GATEWAY_ADMIN_KEY` | `lib/notification-service.ts` | **Unused** since the direct engine; safe to remove with that file |
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | nothing in the reviewed code | Listed in `.env.example`; no `@supabase/*` package is installed. Remove, or document the use |
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `IMPERSONATION_JWT_SECRET`, `NEXT_PUBLIC_APP_URL`, `ADMIN_BOOKING_NOTIFICATIONS`, every `FCM_*` / `FIREBASE_*`.
 
-### Rules
-
-- Never commit `.env` or `service-account.json`.
-- `ADMIN_JWT_SECRET` shorter than 32 bytes throws on first use (every request fails with 401/500).
-- `getSecret()` and the encryption key are read lazily, so a missing key only shows up at the first login.
+Never commit `.env`. A secret shorter than required fails on first use; keys are read lazily, so a missing key only shows up at the first login or first service call.
 
 ---
 
 ## 12. Redis Keys
 
-| Key | TTL | Value | Purpose |
-|---|---|---|---|
-| `admin:sess:{sid}` | remaining session life | SessionRecord JSON | Session |
-| `admin:rt:{sha256(refresh)}` | same | sid | Current refresh token |
-| `admin:rt_used:{sha256}` | same | `{ sid, at }` | Rotated token memory |
-| `admin:sessions:{adminId}` | 7 d | zset of sids | Concurrent session cap |
-| `admin:mfa_tmp:{jti}` | 5 min | adminId | Single-use MFA challenge |
-| `admin:mfa_fail:{adminId}` | 15 min | integer | Wrong MFA codes |
-| `admin:mfa_pending:{adminId}` | 10 min | plaintext TOTP secret | Setup in progress |
-| `admin:totp_used:{adminId}:{code}` | 120 s | `1` | TOTP replay protection |
-| `admin:rl:login:ip:{ip}` | 15 min | integer | Login, 30 per IP |
-| `admin:rl:login:email:{email}` | 15 min | integer | Login, 15 per email |
-| `admin:rl:mfa:ip:{ip}` | 15 min | integer | MFA verify, 40 per IP |
-| `admin:rl:refresh:ip:{ip}` | 15 min | integer | Refresh, 120 per IP |
-| `admin:rl:mfa-setup:{adminId}` | 1 h | integer | 10 per hour |
-| `admin:rl:mfa-setup-confirm:{adminId}` | 10 min | integer | 8 per 10 min |
+| Key | TTL | Purpose |
+|---|---|---|
+| `admin:sess:{sid}` | remaining session | session record |
+| `admin:rt:{sha256(refresh)}` / `admin:rt_used:{sha256}` | same | current / rotated refresh token |
+| `admin:sessions:{adminId}` | 7 d | concurrent-session zset |
+| `admin:mfa_tmp:{jti}` | 5 min | single-use MFA challenge |
+| `admin:mfa_fail:{adminId}` | 15 min | wrong MFA codes |
+| `admin:mfa_pending:{adminId}` | 10 min | setup in progress |
+| `admin:totp_used:{adminId}:{code}` | 120 s | TOTP replay protection |
+| `admin:rl:*` | 10 min to 1 h | login, mfa, refresh, mfa-setup limiters |
 
-Keys the admin panel **reads or deletes in other services' namespaces**: `worker:location:{id}` (read, optional), `review:{id}` and `rating:summary:{workerId}` (deleted after moderation). It does **not** delete `user:status:{id}` or `worker:status:{id}` (see 21).
+Keys the panel reads or deletes in other services' namespaces: `worker:location:{id}` (read, optional map overlay); `review:{id}`, `rating:summary:{workerId}` are now cleared by review-service; **`user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` are deleted on every user moderation action**; worker-side keys are cleared by worker-service's moderation and cache endpoints.
 
-The rate limiter **fails closed**: a Redis error propagates and the request fails with 500.
+The auth rate limiter **fails closed** (a Redis error returns 500).
 
 ---
 
 ## 13. Audit Log
 
-`admin_audit_log` is append-only and written by `logAdminAction()` (throws on failure) or `logAuthEvent()` (swallows failure so login never breaks).
+`admin_audit_log` is append-only. `logAdminAction()` never throws when used after an action (prints the entry on failure); inside a transaction pass the client and a failure rolls the action back. `logAuthEvent()` swallows failures so login never breaks. `resource_id` is `VARCHAR(100)` (UUIDs and slugs).
 
 | Area | Actions |
 |---|---|
 | Auth | `auth.login_failed`, `auth.login_success`, `auth.login_trusted_device`, `auth.login_mfa_pending`, `auth.login_mfa_setup_required`, `auth.mfa_enabled`, `auth.mfa_success`, `auth.mfa_success_backup_code`, `auth.mfa_failed`, `auth.mfa_lockout`, `auth.logout`, `auth.logout_forget_device`, `auth.refresh_reuse_detected` |
-| Users | `user.warned`, `user.suspended`, `user.unsuspended`, `user.banned`, `user.contact_edited`, `user.impersonation_started` |
-| Workers | `worker.warned`, `worker.unsuspended`, `worker.banned`, `worker.contact_edited`, `worker.featured`, `worker.unfeatured`, `worker.badge_awarded`, `worker.badge_removed`, `worker.forced_offline`, `worker.reverification_requested`, `worker.verification_approved`, `worker.verification_rejected`, `worker.verification_info_requested`, `worker.verification_cnic_saved`, `worker.verification_viewed` |
-| Bookings | `booking.cancelled_by_admin`, `booking.status_overridden`, `booking.reassigned`, `booking.escalated_to_dispute`, `booking.note_added` |
+| Admins | `admin.created`, `admin.updated`, `admin.deactivated`, `admin.mfa_reset`, `admin.logged_out_everywhere` |
+| Users | `user.warned`, `user.suspended`, `user.unsuspended`, `user.banned`, `user.contact_edited`, `users.exported` |
+| Workers | `worker.warned`, `worker.suspended`, `worker.unsuspended`, `worker.banned`, `worker.contact_edited`, `worker.featured`, `worker.unfeatured`, `worker.badge_awarded`, `worker.badge_removed`, `worker.forced_offline`, `worker.reverification_requested`, `worker.verification_approved`, `worker.verification_rejected`, `worker.verification_info_requested`, `worker.verification_cnic_saved`, `worker.verification_viewed`, `worker.documents_viewed`, `workers.exported` |
+| Bookings | `booking.cancelled_by_admin`, `booking.status_overridden`, `booking.reassigned`, `booking.escalated_to_dispute`, `booking.note_added`, `bookings.exported` |
 | Disputes | `dispute.claimed`, `dispute.released`, `dispute.escalated`, `dispute.resolved`, `dispute.note_added` |
 | Payments | `payment.manual_refund`, `payout.retried`, `payments.report_exported` |
 | Reviews | `review.hidden`, `review.restored`, `review.reports_dismissed`, `review.note_added` |
 | Notifications | `notification.broadcast_launched`, `notification.test_dispatched` |
-| Catalog | `category.created`, `category.updated`, `category.activated`, `category.deactivated`, `service.created`, `service.updated`, `service.activated`, `service.deactivated`, `pricing_config.updated` |
+| Catalog | `category.*`, `service.*`, `pricing_config.updated` (with before and after values) |
 | Waitlist | `waitlist.status_updated`, `waitlist.exported` |
 
-The disputes, reviews and verification detail pages show a filtered slice of this table as their "Activity" tab (`resource_type` + `resource_id`).
-
-**Not logged:** user export, workers export, bookings export (only waitlist and payment reports are), failed permission checks, and all read access to CNIC documents (only the review-page open is logged).
-
-Useful queries:
+**Not logged:** failed permission checks, plain reads of data pages.
 
 ```sql
 -- Who did what to this record
@@ -1007,192 +758,131 @@ SELECT created_at, admin_email, action, ip_address, notes FROM admin_audit_log
 WHERE action IN ('auth.login_failed','auth.mfa_failed','auth.mfa_lockout')
   AND created_at > now() - interval '24 hours' ORDER BY created_at DESC;
 
--- Impersonations ever started
-SELECT created_at, admin_email, resource_id FROM admin_audit_log WHERE action = 'user.impersonation_started';
+-- Everyone who opened identity documents this week
+SELECT created_at, admin_email, resource_id FROM admin_audit_log
+WHERE action = 'worker.documents_viewed' AND created_at > now() - interval '7 days' ORDER BY created_at DESC;
 ```
 
 ---
 
 ## 14. Error Handling Standard
 
-- Responses: `{ "error": "Human-readable message" }`. Auth routes may add `code` (`MFA_SETUP_REQUIRED`).
-- Each domain has an `*ActionError(status, message)` class (`BookingActionError`, `DisputeActionError`, `ReviewActionError`, `VerificationError`, `PaymentActionError`, `NotificationActionError`) thrown inside transactions and mapped by `bookingErrorResponse`, `disputeErrorResponse`, `reviewErrorResponse`, `errorResponse`, `paymentsErrorResponse`, `notificationsErrorResponse`.
-- Postgres codes handled: `23505` unique → `409`; `23P01` exclusion (worker double booked) → `409`; `42P01` / `42703` (table or column missing) → `503` with "run migration X", or `available:false` for detail tabs; `23503` FK → worker not found.
-- External services: `PaymentServiceError` (>= 500 mapped to `502`), `NotificationServiceError`.
-- Anything else: `console.error(tag, err)` + generic message + `500`. No stack traces leak.
+- Responses `{ "error": "Human-readable message" }`; service errors add `code`.
+- Calls to other services use `ServiceError` (`lib/internal-client.ts`): the service's own 4xx (400, 403, 404, 409, 422) is passed through with its message; 5xx and unreachable become `502` / `503`.
+- Domain error classes (`BookingActionError`, `DisputeActionError`, `ReviewActionError`, `VerificationError`, `PaymentActionError`, `NotificationActionError`) are mapped by their `*ErrorResponse` helpers.
+- Postgres: `23505` → 409; `23P01` → 409; `42P01` / `42703` → 503 "run migration X" or `available:false`; `23503` → not found.
+- Unknown: `console.error(tag, err)` + generic 500; no stack traces leak.
 
-| Status | Meaning here |
+| Status | Meaning |
 |---|---|
-| 400 | Validation failed (missing reason, bad enum, invalid amount) |
-| 401 | No / expired token or destroyed session (client interceptor refreshes) |
-| 403 | Permission missing, MFA setup required, CSRF origin mismatch, escalated-dispute rule |
-| 404 | Not found, or `:id` not a UUID (most modules) |
-| 409 | Conflict or state guard ("someone already decided", duplicate, overlap) |
-| 422 | Business rule (status not allowed, worker not eligible) |
-| 423 | Admin account locked |
-| 429 | Auth rate limit, duplicate broadcast guard |
-| 502 / 503 | payment-service unreachable / not configured, migration missing |
+| 400 | validation failed |
+| 401 | no / expired token or destroyed session |
+| 403 | permission, MFA setup required, CSRF origin, escalated dispute |
+| 404 | not found, or `:id` not a UUID |
+| 409 | conflict or state guard |
+| 410 | removed endpoint (impersonation) |
+| 422 | business rule |
+| 423 | admin locked |
+| 429 | rate limit, duplicate broadcast guard |
+| 502 / 503 | another service failed / not configured, migration missing |
 
 ---
 
 ## 15. Frontend Conventions
 
-### Design system (`globals.css`)
+Design tokens in `globals.css` (page `#F7F8FA`, surface `#FFFFFF`, border `#E5E7EB`, accent `#1F6F5F`, Inter + JetBrains Mono). Primitives: `Button`, `Input`, `Card`, `Badge`, `StatusBadge`, `DataTable`, `ConfirmDialog`. Layout: 240 px sidebar (64 px collapsed), 56 px header.
 
-| Token | Value |
-|---|---|
-| Page background | `#F7F8FA` |
-| Surface / border | `#FFFFFF` / `#E5E7EB` |
-| Text primary / secondary / muted | `#111827` / `#6B7280` / `#9CA3AF` |
-| Accent (brand green) | `#1F6F5F`, hover `#195c4f` |
-| Success / warning / danger / info | `#16A34A` / `#D97706` / `#DC2626` / `#2563EB` with matching tints |
-| Fonts | Inter (sans), JetBrains Mono (mono) via `next/font` |
-
-Primitives: `Button` (primary, secondary, destructive, ghost; sm, md; loading), `Input`, `Card`, `Badge` (tones), `StatusBadge`, `DataTable` (loading skeleton, error + retry, empty state, row click), `ConfirmDialog` (reason box, typed confirmation, async confirm). Layout: 240 px sidebar (64 px collapsed, persisted in `localStorage`), 56 px header with breadcrumb.
-
-### Page pattern per module
-
-`Section` component (owns filters + tab state) → `KpiGrid` → `FilterBar` → `Table` → optional dialogs. Detail pages: `Header`, `Summary`, parties, tabs (activity, notes), admin action panel. Pagination resets to page 1 on any filter change (`update()` in every `use*Filters`).
-
-### Data fetching
-
-- `fetcher` (`lib/swr-fetcher.ts`) throws `Error(body.error)` on non-2xx.
-- Mutations are plain `fetch` in a per-module `*Actions` object (`bookingActions`, `disputeActions`, `workerActions`, …). After a mutation the component calls `mutate()` on the list/detail hook.
-- Auth refresh is global (section 5.4); hooks never handle 401.
-
-| Poll interval | Where |
-|---|---|
-| 5 s | map workers |
-| 15 s | map jobs |
-| 30 s | dashboard, booking/dispute/review detail and lists, worker presence, notification KPIs |
-| 60 s | analytics, finance, dispute / review lists, map demand, waitlist UTM |
-| 5 s while sending | campaign detail when `status = SENDING` |
-
-### Known UI inconsistency
-
-`app/auth/layout.tsx` uses `bg-[--bg-page]`, and `DataTable` uses `text-[--accent]`. Those CSS variables are not defined (the tokens are `--color-*`), so Tailwind 4 ignores them. Use `bg-bg-page` / `text-accent`.
+- Page pattern: `Section` (filters + tab state) → `KpiGrid` → `FilterBar` → `Table`. Detail pages: `Header`, `Summary`, parties, tabs, action panel.
+- Data: `fetcher` throws `Error(body.error)`; mutations are plain `fetch` in a `*Actions` object, then `mutate()`; 401 handled globally.
+- Poll intervals: 5 s map workers, 15 s map jobs, 30 s dashboard / details / lists, 60 s analytics / finance, 5 s while a campaign is `SENDING`.
+- Use `bg-bg-page` and `text-accent` (the old `bg-[--bg-page]` / `text-[--accent]` variables were undefined).
+- COD wording: use **"Fee waiver %"** instead of "Refund %" in the booking cancel dialog.
+- `SendTestModal` must show "see History" when `pushDelivered` is `null`.
 
 ---
 
 ## 16. Local Development Setup
 
-### Prerequisites
-
-| Tool | Version |
-|---|---|
-| Node.js | ≥ 20 |
-| npm | ≥ 10 |
-| PostgreSQL + PostGIS | the shared TaskLync database (all 8 backend services' migrations applied first) |
-| Redis | ≥ 6.2 |
-
-### Steps (Windows / PowerShell)
+Prerequisites: Node ≥ 20, npm ≥ 10, the shared PostgreSQL (all backend migrations applied first), Redis ≥ 6.2.
 
 ```powershell
-# 1. Install
 npm install
-
-# 2. Environment
-Copy-Item .env.example .env
-# fill DATABASE_URL, REDIS_URL, ADMIN_JWT_SECRET, ADMIN_MFA_ENCRYPTION_KEY
-# add the integration variables from section 11 you need (FCM_*, PAYMENT_SERVICE_*)
-
-# 3. Migrations, in order, against the shared DB
-psql $env:DATABASE_URL -f db/migrations/001_admin_auth.sql
-# ... 002 to 015, one by one
-
-# 4. First super admin (max 2 via script)
-npx tsx scripts/seed-super-admin.ts
-# prompts: email, full name, temporary password (12+ chars, upper + lower + digit)
-
-# 5. Run
-npm run dev          # http://localhost:3000
+Copy-Item .env.example .env          # DATABASE_URL, REDIS_URL, ADMIN_JWT_SECRET, ADMIN_MFA_ENCRYPTION_KEY + service URLs
+npm run migrate                      # existing database: npm run migrate -- --baseline=015 the first time
+npx tsx scripts/seed-super-admin.ts  # first super admin (max 2)
+npm run dev                          # http://localhost:3100
 ```
 
-First login → password → forced MFA enrolment (QR, 6-digit code, **save the 10 backup codes**) → dashboard.
-
-### Scripts
+First login → password → forced MFA enrolment (save the 10 backup codes) → dashboard. More admins: **Settings → Admin users**.
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` / `build` / `start` / `lint` | Standard Next.js |
-| `npm run setup:firebase` | Reads `service-account.json`, writes `FCM_PROJECT_ID` and `FCM_SERVICE_ACCOUNT_JSON_BASE64` into `.env` (and the backend notification-service `.env` if the relative path exists) |
-| `.\scripts\encode-firebase-credentials.ps1` | Same, PowerShell, copies the base64 to the clipboard |
-| `npx tsx scripts/generate-broadcast-templates.ts [outDir]` | Writes push/SMS templates (default `./generated-templates`) |
-| `npx tsx scripts/test-direct-broadcast.ts` | Sends one real push to a hard-coded user id. **Edit the ids before running** |
+| `npm run dev` / `build` / `start` / `lint` | Next.js (port 3100) |
+| `npm run migrate` | apply new migrations (`admin_migrations` table) |
+| `npm test` | Vitest |
+| `npx tsx scripts/generate-broadcast-templates.ts [outDir]` | push / SMS template files for notification-service |
 
-### Local shortcuts and gotchas
-
-- Port 3000 is also the API Gateway's port in the other docs; change one of them (`next dev -p 3100`) when running both.
-- Cookies are `Secure` only in production, so plain `http://localhost` works.
-- Redis must be reachable: the login route calls it, and the rate limiter fails closed.
-- Without Firebase credentials, test sends still create the in-app feed row and report "Firebase Admin unconfigured".
+Local notes: cookies are `Secure` only in production; Redis must be reachable (the limiter fails closed); to use booking, worker and review actions locally run those services and set their URLs and keys, otherwise the actions answer 503 "not configured".
 
 ---
 
 ## 17. Testing
 
-`vitest` and `supertest` are in `devDependencies`, but there is **no test script and no test files** in the repository yet. Current verification is manual. Minimum smoke checklist after every deploy:
+`vitest` with `@` alias. Current tests: UUID id guard, RBAC (impersonation gone, path order, waitlist and settings), review moderation transitions, `safeNextPath`, `mapSignedDocuments` (never exposes raw URLs).
+
+Manual smoke checklist after every deploy:
 
 | # | Check | Expect |
 |---|---|---|
-| 1 | Open `/` without cookies | Redirect to `/auth/login` |
-| 2 | Wrong password 5 times for one email | 6th correct attempt gives `423` locked |
-| 3 | Correct password, no MFA enrolled | Redirect to `/auth/mfa-setup`; opening `/` bounces back |
-| 4 | Complete MFA setup | Backup codes shown once; dashboard loads |
-| 5 | Reuse the same TOTP code twice | Second fails |
-| 6 | Wait 16 min on a tab, click a list page | Silent refresh, no login screen |
-| 7 | Log out in tab A, call an API from tab B | `401`, then redirect to login |
-| 8 | Sign in as OPS, open `/payments` | Redirected to `/` |
-| 9 | POST any `/api/admin/*` with a foreign `Origin` header | `403` |
-| 10 | Cancel a PENDING booking | Booking CANCELLED, history row `admin:<email>`, outbox row, audit row |
-| 11 | Resolve a dispute inside the worker's 24 h window without override | `409` |
-| 12 | Approve a worker with no identity document | `409` |
-| 13 | Launch a broadcast to one test user | Feed row + `notification_deliveries` row |
-| 14 | `SELECT count(*) FROM admin_event_outbox WHERE published_at IS NULL` | Should be 0 once the relay exists |
-
-Recommended first automated tests (pure logic, no DB): `resultingStatus` (reviews), `standardRefundPercent`, `safeNextPath`, `checkValues` / `renderCopy` (notification catalog), `permissionForPath` ordering, `normalizeBackupCode`, `buildBookingWhere` parameter numbering.
+| 1 | Open `/` without cookies | redirect to login |
+| 2 | Wrong password 5 times | 6th correct attempt → 423 |
+| 3 | Correct password, no MFA | forced to `/auth/mfa-setup` |
+| 4 | Same TOTP code twice | second fails |
+| 5 | Idle 16 min then click | silent refresh |
+| 6 | Log out in tab A, call API in tab B | 401, then login |
+| 7 | OPS opens `/payments` | redirected to `/` |
+| 8 | Foreign `Origin` on any POST | 403 |
+| 9 | `GET /api/admin/users/abc` | 404 JSON |
+| 10 | Cancel a PENDING booking | `CANCELLED`, history `admin:<email>`, audit row, event emitted by booking-service |
+| 11 | Dispute inside the worker window without override | 409 |
+| 12 | Approve a worker with the new CNIC front + back | verified |
+| 13 | Open worker documents | URLs expire in about 15 min, `worker.documents_viewed` logged |
+| 14 | Suspend a worker | works, gone from search in seconds |
+| 15 | Create a category | 201 and an audit row |
+| 16 | Edit pricing | booking estimate changes within 60 s |
+| 17 | Broadcast to one test user | 202 in under a second, campaign visible in History |
+| 18 | Impersonate endpoint | 410 |
+| 19 | Deactivate an admin | their sessions die at once |
 
 ---
 
 ## 18. Deployment
 
-Target: Vercel (README) or any Node host. The app needs outbound access to Postgres, Redis, payment-service and Google (FCM).
-
-### Pre-deploy checklist
+Target: Vercel or any Node host. Outbound access to Postgres, Redis, booking, worker, review, search, payment services and the API gateway.
 
 ```
-□ npm run build passes, npm run lint clean
-□ Migrations 001 to 015 applied in order on the shared DB; get_user_kpis() exists
-□ Other services' tables exist first (users, workers, bookings, disputes, payments, reviews, notifications)
-□ ADMIN_JWT_SECRET (≥ 48 chars random) and ADMIN_MFA_ENCRYPTION_KEY (32 bytes base64) set, backed up separately
-□ DATABASE_URL, REDIS_URL set; Redis persistent and ≥ 6.2, TLS + password in production
-□ NEXT_PUBLIC_ADMIN_URL = https://admin.tasklync.pk
-□ PAYMENT_SERVICE_URL + PAYMENT_SERVICE_INTERNAL_KEY (same key as payment-service)
-□ FCM_SERVICE_ACCOUNT_JSON_BASE64 set as a project secret (never in the repo)
-□ IMPERSONATION_JWT_SECRET + NEXT_PUBLIC_APP_URL set, or the impersonate route removed
-□ Mapbox token set for the live map
+□ booking-service v3.1.0 deployed first
+□ npm run build and npm run lint pass
+□ Migrations 001 to 016 applied (npm run migrate); get_user_kpis() exists after 016
+□ ADMIN_JWT_SECRET (≥ 48 chars) and ADMIN_MFA_ENCRYPTION_KEY (32 bytes base64) set and backed up separately
+□ DATABASE_URL (shared DB) + DATABASE_CA_CERT; REDIS_URL = the SHARED Redis (≥ 6.2, TLS + password)
+□ All service URLs and internal keys set (section 11); every key matches the target service
+□ API_GATEWAY_URL + GATEWAY_ADMIN_KEY set (broadcasts)
+□ The DB role used by the panel bypasses RLS (Supabase postgres)
 □ Proxy overwrites x-real-ip / x-forwarded-for (Vercel does; nginx needs proxy_set_header X-Real-IP $remote_addr)
-□ super admin seeded; second super admin created as the break-glass account
+□ Super admin seeded; second super admin created as break-glass
 □ ADMIN_MFA_REQUIRED not set to false
-□ Outbox relay running (section 21, item 1) OR booking/dispute actions disabled in the UI
-□ search-service writes search_demand_log (else the heatmap uses booking locations)
-□ admin panel deletes user:status:{id} / worker:status:{id} after ban/suspend (or accept 60 s delay)
-□ Cloudinary: next.config image host matches the real cloud name (currently df47l0i1v)
+□ Firebase key removed from the host (and rotated if it was ever deployed here)
+□ Mapbox token set; Cloudinary host in next.config.ts matches the real cloud name
 ```
 
-### Rollout order
+Rollout: apply migrations (additive, safe before code) → deploy → tell owning teams about any new column.
 
-1. Apply new migrations (additive, idempotent, safe before the code).
-2. Deploy the app.
-3. Tell the owning teams about any new column on their tables.
-
-### Rotating secrets
-
-| Secret | Effect of rotation |
+| Secret rotated | Effect |
 |---|---|
-| `ADMIN_JWT_SECRET` | All access tokens and MFA challenges invalid; admins re-login (refresh tokens are opaque and survive, so users are silently re-issued) |
-| `ADMIN_MFA_ENCRYPTION_KEY` | **Breaks every stored TOTP secret and backup code.** Re-encrypt before rotating, or reset MFA for all admins |
-| `PAYMENT_SERVICE_INTERNAL_KEY` | Change in both places at once |
+| `ADMIN_JWT_SECRET` | all access tokens invalid; refresh tokens are opaque and survive, so users are silently re-issued |
+| `ADMIN_MFA_ENCRYPTION_KEY` | **breaks every stored TOTP secret and backup code**: re-encrypt first or reset MFA for all admins |
+| a service internal key | change in both places at once |
 
 ---
 
@@ -1200,37 +890,35 @@ Target: Vercel (README) or any Node host. The app needs outbound access to Postg
 
 | Symptom | Check / fix |
 |---|---|
-| Every request redirects to login | `ADMIN_JWT_SECRET` changed or missing; Redis unreachable (session lookup fails); cookie `Secure` on plain http in production-mode build |
-| `Error: ADMIN_JWT_SECRET must be set and at least 32 bytes long` | Env var missing or short |
-| `ADMIN_MFA_ENCRYPTION_KEY must be 32 bytes (base64)` | Regenerate with the command in section 11 (only safe before any admin enrolled) |
-| Admin locked out | `UPDATE admin_users SET failed_attempts = 0, locked_until = NULL WHERE LOWER(email) = '…';` then `DEL admin:rl:login:email:<email>` and the IP key in Redis |
-| Admin lost the authenticator and backup codes | Super admin: `UPDATE admin_users SET mfa_enabled = false, mfa_secret = NULL WHERE …; DELETE FROM admin_mfa_backup_codes WHERE admin_id = …; UPDATE admin_trusted_devices SET revoked_at = now() WHERE admin_id = …;` then kill sessions (below). Next login forces enrolment. There is no UI for this |
-| Force-logout one admin | Redis: `ZRANGE admin:sessions:<adminId> 0 -1`, then `DEL admin:sess:<sid>` per sid. Or set `is_active = false` (all sessions die at the next refresh, ≤ 15 min; API calls with a dead session fail immediately only if the Redis key is also deleted) |
-| `Analytics functions are missing or out of date` (503) | Run `011_analytics.sql` |
-| `Dispute tables are out of date` (503) | Run `010_disputes_admin.sql` |
-| `Review tables are out of date` (503) | Run review-service migrations, then `014` |
-| Booking timeline empty, "unavailable" | Migration 008 not applied |
-| `payment-service is not configured` | `PAYMENT_SERVICE_URL` / `PAYMENT_SERVICE_INTERNAL_KEY` missing |
-| Push test says "no active FCM device token" | The account never registered a token (user-service `POST /users/me/fcm-token`, worker-service equivalent), or the dead token was pruned |
-| Broadcast to all users times out | The engine is sequential and runs inside the request (section 21, item 5). Use smaller segments until it moves to a queue |
-| Map shows no workers | Workers need a `worker_locations` row; filter "Include offline"; check verification and status |
-| Heatmap says fallback | `search_demand_log` empty: search-service is not writing to it |
-| Worker "approval blocked: no identity document" | See section 21, item 3 |
-| Banned user can still act in the app | Cache: `DEL user:status:{id}` (or `worker:status:{id}`); existing access tokens live ≤ 15 min |
-| Admin actions not reaching payment/worker/chat services | The outbox is not being relayed (section 21, item 1) |
+| Every request redirects to login | `ADMIN_JWT_SECRET` changed or missing; Redis unreachable; Secure cookie on plain http |
+| `ADMIN_JWT_SECRET must be set…` | env var missing or short |
+| Admin locked out | `UPDATE admin_users SET failed_attempts = 0, locked_until = NULL WHERE LOWER(email) = '…';` then delete `admin:rl:login:*` keys |
+| Admin lost authenticator and backup codes | **Settings → Admin users → Reset MFA** (another Super Admin). SQL fallback: `UPDATE admin_users SET mfa_enabled=false, mfa_secret=NULL WHERE …; DELETE FROM admin_mfa_backup_codes WHERE admin_id=…;` |
+| Force-logout one admin | **Settings → Admin users → Sign out everywhere**, or deactivate |
+| An action answers 502 / 503 "… is not configured / unreachable" | check that service's URL and key in the env (section 11) and that the service is up |
+| 401 `INVALID_INTERNAL_KEY` from a service | key differs between the panel and that service |
+| Verification: "documents could not be loaded" | worker-service verification summary failing; check its logs and `WORKER_SERVICE_URL` |
+| Approve fails with 409 / 422 | message comes from worker-service (missing CNIC side, duplicate CNIC, status changed) |
+| Suspend / ban succeeded but the worker still appears in search | search-service reindex failed (best effort); run `POST search /internal/reindex/<id>` |
+| Banned user still acts in the app | user caches cleared by the panel; existing access tokens live ≤ 15 min |
+| Broadcast stays `SENDING` | notification-service job issue; the panel only queued it. Check notification-service and its Kafka / queue |
+| Test push says "no device token" | the account never registered an FCM token (app must register it) |
+| Revenue differs between dashboard and finance | should be equal after 016; if not, confirm 016 ran and the cached SWR data refreshed |
+| `Analytics functions are missing` (503) | run `011_analytics.sql` |
+| `Dispute tables are out of date` (503) | run `010_disputes_admin.sql` |
+| `Review tables are out of date` (503) | run review-service migrations, then `014` |
+| Booking timeline empty | migration 008 not applied |
+| Pricing page saves but prices do not change | booking-service has `PRICING_CONFIG_FROM_DB=false`, or values were out of its accepted range (see its logs) |
+| Audit write failed (`[audit] FAILED …` in logs) | the action succeeded; copy the JSON entry from the log into `admin_audit_log` |
 
 ```sql
--- Outbox backlog
-SELECT topic, event_type, count(*) FROM admin_event_outbox WHERE published_at IS NULL GROUP BY 1, 2;
+-- Active sessions per admin  (Redis)  ZCARD admin:sessions:<adminId>
 
--- Active admin sessions per admin
--- (Redis) ZCARD admin:sessions:<adminId>
-
--- Trusted devices of an admin
 SELECT id, ip_address, created_at, last_used_at, expires_at, revoked_at
 FROM admin_trusted_devices WHERE admin_id = '<uuid>' ORDER BY created_at DESC;
 
 -- Which migrations look applied
+SELECT name, ran_at FROM admin_migrations ORDER BY name;
 SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_notes') AS m014,
        to_regclass('search_demand_log') AS m013, to_regclass('dispute_admin_notes') AS m010,
        to_regclass('booking_status_history') AS m008, to_regclass('worker_verification_reviews') AS m007;
@@ -1240,128 +928,126 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 
 ## 20. Architecture Decision Records (ADRs)
 
-### ADR-001: One Next.js app, BFF routes, no separate admin service
-**Status:** Accepted. UI and API live together; the browser never talks to other services. Fewer moving parts for a small team. Cost: the panel is coupled to the shared database schema.
+**ADR-001: One Next.js app with BFF routes.** Accepted. UI and API together; the browser never talks to other services.
 
-### ADR-002: Direct SQL on the shared database
-**Status:** Accepted (revisit). Every list, KPI and detail view needs joins across eight services' tables; HTTP aggregation would be slow and large. Consequence: schema changes in any service can break the panel, and business rules are duplicated (section 21). Writes to other services' tables should shrink over time in favour of internal endpoints.
+**ADR-002: Direct SQL on the shared database for reads, and for admin-owned columns only.** Accepted (narrowed in v1.1.0). Lists, KPIs and details need joins across eight services. Writes to tables owned by another service go through that service (ADR-013).
 
-### ADR-003: Separate admin authentication (HS256, own tables, own Redis keys)
-**Status:** Accepted. Matches auth-service ADR-010: a customer or worker row can never become an admin. HS256 is fine because only this app signs and verifies.
+**ADR-003: Separate admin authentication (HS256, own tables, own Redis keys).** Accepted. A customer or worker row can never become an admin.
 
-### ADR-004: MFA mandatory for every role, with trusted devices
-**Status:** Accepted. A password-only session has scope `mfa_setup` and can reach nothing else. Trusted device (7 d, per admin, revocable) keeps daily use tolerable. A session issued on a trusted device is capped to the remaining trust window.
+**ADR-004: MFA mandatory for every role, with trusted devices.** Accepted. Password-only sessions can reach nothing but MFA enrolment.
 
-### ADR-005: Opaque rotating refresh tokens + server-side sessions
-**Status:** Accepted. Access JWT lives 15 min, the Redis session is the real authority (`authenticateAccessToken` checks both). Gives instant logout, eviction and deactivation. Absolute expiry is never extended.
+**ADR-005: Opaque rotating refresh tokens + server-side sessions.** Accepted. The Redis session is the real authority; absolute expiry never extended.
 
-### ADR-006: Two-layer authorisation (edge + handler)
-**Status:** Accepted. Middleware blocks obvious cases cheaply at the edge; handlers re-check with the Redis session. Never rely on middleware alone.
+**ADR-006: Two-layer authorisation (edge + handler).** Accepted. Middleware blocks cheaply, handlers re-check with the Redis session.
 
-### ADR-007: Derived statuses instead of stored status columns
-**Status:** Accepted. `status`, `presence` and payment status are computed from timestamps, so they cannot drift. Same helpers feed list, filter, KPI and map.
+**ADR-007: Derived statuses instead of stored status columns.** Accepted.
 
-### ADR-008: Transactional outbox for admin-originated events
-**Status:** Accepted, **incomplete** (relay missing). Same idea as booking-service ADR-011. Rows are written in the action's transaction so a Kafka outage cannot lose them.
+**ADR-008: Transactional outbox for admin-originated events.** **Superseded by ADR-013.** The relay was never built; the table is deprecated.
 
-### ADR-009: Direct FCM broadcast from the admin server
-**Status:** Accepted for now, to be reviewed. The gateway hop to notification-service was fragile, so `lib/direct-broadcast-engine.ts` writes the campaign, feed and delivery rows and calls FCM itself. It bypasses opt-outs, quiet hours, SMS and the service's dedup. Long term it belongs in a queue or back in notification-service.
+**ADR-009: Direct FCM broadcast from the admin server.** **Reversed.** It bypassed opt-outs and quiet hours, never sent SMS, ran sequentially inside one request and required a Firebase key on the admin host. Broadcasts go through the gateway side door to notification-service.
 
-### ADR-010: Server computes money; the browser only chooses an action
-**Status:** Accepted. Dispute resolution derives refund amount and percentage from the booking; manual refunds are re-validated against the payment and forwarded to payment-service.
+**ADR-010: The server computes money; the browser only chooses an action.** Accepted. Dispute amounts are derived server-side (now inside booking-service).
 
-### ADR-011: Availability-aware reads for other services' tables
-**Status:** Accepted. Detail tabs return `available: false` when a table or column is missing so the panel keeps working while other services are still being built.
+**ADR-011: Availability-aware reads for other services' tables.** Accepted.
 
-### ADR-012: Reason required for every destructive action
-**Status:** Accepted. Reasons go to the audit log and, for verification and warnings, to the worker/user.
+**ADR-012: Reason required for every destructive action.** Accepted.
+
+**ADR-013: The owning service performs the write and emits the event.** Accepted (v1.1.0). booking, worker and review actions are internal API calls. Benefits: one writer per table, correct side effects (BullMQ jobs, `is_on_job`, caches, search, ratings), no lost events. The panel keeps SQL only for columns it owns.
+
+**ADR-014: Service clients are isolated in `lib/services/*`.** Accepted. Every URL, key and body shape of another service lives in one file; routes never build service requests themselves.
+
+**ADR-015: Best-effort follow-ups never fail an action.** Accepted. Cache invalidation and search reindex are `bestEffort`; the audit write after an action never throws and prints the entry on failure.
+
+**ADR-016: One date basis for money (completion time, Karachi).** Accepted. Dashboard, finance and analytics agree.
+
+**ADR-017: Impersonation removed.** Accepted. No service accepts the token and a signed JWT in a URL is unsafe. A read-only "view as user" screen can be designed later.
+
+**ADR-018: Documents only as short-lived signed URLs, every access logged.** Accepted.
+
+**ADR-019: Pricing is data owned by the admin panel and read by booking-service.** Accepted. Validated and cached on the booking side with env fallback, so a wrong value cannot stop bookings.
 
 ---
 
 ## 21. Known Issues & Roadmap
 
-Ranked by risk. "Found in code" means verified in the files reviewed; "assumption" means the other service's doc was compared.
+### Open items
 
-### Critical (fix before production)
-
-| # | Issue | Detail | Fix |
-|---|---|---|---|
-| 1 | **Outbox is never published** | Booking cancel / override / reassign / escalate, dispute resolution and verification decisions only write `admin_event_outbox`. `scripts/publish-outbox.ts` does not exist and no Kafka client is installed. payment-service never receives `booking.dispute_resolved` (refund not executed), worker-service never receives `booking.started/cancelled` (slot and `is_on_job` stay wrong), chat/notification never see anything | Build the relay (poll `published_at IS NULL`, `FOR UPDATE SKIP LOCKED`, publish, mark, backoff) or call the owning service's internal endpoint instead |
-| 2 | **Impersonation has no safe consumer** | `/users/:id/actions/impersonate` signs a 20 min JWT with `IMPERSONATION_JWT_SECRET` and returns `${NEXT_PUBLIC_APP_URL}/auth/impersonate?token=…`. No service or app documented accepts it; the JWT secret is separate from RS256 auth-service keys; crashes if env vars unset; the token is returned in the response body and URL | Remove until a real flow exists (read-only "view as" screens are safer), or implement in auth-service with an explicit `impersonatedBy` claim and gateway write-blocking |
-| 3 | **Verification approval does not match worker-service KYC v1.2** | Approve requires a `NATIONAL_ID` or `PASSPORT` document. worker-service v1.2 stores `CNIC_FRONT` + `CNIC_BACK` (legacy types only). Every worker uploading through the new flow is blocked with "No identity document" | Change the check to the worker-service rule: `CNIC_FRONT` + `CNIC_BACK` (+ `BUSINESS_REGISTRATION` for `COMPANY`) not rejected; also approve in one place (worker-service `PATCH /workers/:id/verify` or share the helper) |
-| 4 | **KYC documents are served as raw URLs** | worker-service stores CNIC files as Cloudinary `authenticated` assets and hands out 15 min signed URLs. The admin routes return `file_url` as is, so images will not render (or, if public, are exposed forever) | Sign URLs server-side (Cloudinary `private_download_url` / signed delivery) in `GET /workers/:id/documents` and `/verification` |
-| 5 | **Broadcast engine ignores consent and blocks the request** | Sends to everyone with an FCM token regardless of `notification_preferences` (marketing opt-out) and quiet hours; the "SMS" channel does nothing; all work (≈ 3 queries per recipient plus one FCM call) runs sequentially inside the HTTP request that returns `202`, so "all users" will time out on Vercel and leave the campaign stuck in `SENDING` | Move to a queue (BullMQ) or back to notification-service; filter by preferences; chunk with `sendEach`; mark FAILED on error |
-| 6 | **Payment/finance numbers depend on COD settlement** | Dashboard KPIs read `payments` HELD/RELEASED; the dashboard chart uses `created_at`, finance uses completion time | Pick one date basis (completion) and reuse one SQL source |
-
-### High
-
-| # | Issue | Detail | Fix |
-|---|---|---|---|
-| 7 | Worker **suspend** route missing | `workerActions.suspend` calls `/workers/:id/actions/suspend`; only `unsuspend`, `warn`, `ban` exist. The Suspend button 404s (permission `workers:suspend` is defined) | Add the route (mirror users/suspend, with validation) |
-| 8 | Status cache not invalidated | user-service and worker-service cache `user:status:{id}` / `worker:status:{id}` for 60 s and expect `DEL` after ban / suspend. The panel never deletes them | `redis.del` after warn/suspend/ban/unsuspend/force-offline |
-| 9 | Review moderation bypasses review-service | Writes `reviews` directly, deletes two cache keys, emits **no `review.moderated`**, so `workers.avg_rating` / `total_reviews` stay stale after hide/restore. review-service doc: "always use `PATCH /internal/reviews/:id/moderate`" | Call that endpoint with `X-Internal-Key` and `admin_id` instead of SQL |
-| 10 | Admin actions skip booking-service side effects | Cancel / reassign do not re-sync the worker's `is_on_job`, do not remove BullMQ timeout / auto-complete jobs, do not set `cancellation_code` / `cancellation_fee_amount`, do not write `booking_penalties`; override-to-COMPLETED skips the COD settlement transaction (wallet, payments) and relies on `booking.payment_release`; reassign copies `payment_intent_id` onto two bookings and loses provider/company fields | Route these actions through booking-service internal endpoints, or document the exact subset supported |
-| 11 | `BOOKING_TIMEOUT_MINUTES = 30` | booking-service v3 uses a tiered window (5 / 30 / 120 min, capped at half the time remaining). Reassign sets `expires_at = now + 30 min` regardless of urgency | Align with booking-service config; ideally let booking-service compute it |
-| 12 | Pricing config not consumed | `platform_pricing_config` default `platform_fee_percent = 15` conflicts with booking-service (5 % customer + 5 % worker, via env). Editing it here changes nothing | Make booking-service read the table (env fallback), and change the default to the real policy |
-| 13 | Missing / mismatched tables | Booking GPS trail reads `worker_location_history` (worker-service has no such table, only one `worker_locations` row per worker), worker earnings read `worker_earnings` (worker-service uses `worker_wallets`, `worker_payouts`, `payments`), blocked-workers query selects `workers.category` (column does not exist, error `42703` is swallowed → empty list), user reports read `reports` (no such table documented) | Point to real tables or remove the tabs |
-| 14 | `get_user_kpis()` not in any admin migration | Users KPI endpoint fails with `42883` on a fresh DB | Add to a migration |
-| 15 | Rejection codes and event names differ from worker-service | Admin codes: `cnic_unclear, face_mismatch, invalid_documents, fake_information, duplicate_account, other`. worker-service: `ID_UNCLEAR, ID_MISMATCH, ID_EXPIRED, DUPLICATE_ACCOUNT, FAKE_DOCUMENT, OTHER`. Events: admin `worker.rejected` vs worker-service `worker.verification.rejected`; admin emits no `worker.verification.pending` | One shared constants file, one event name |
-| 16 | Catalog write coupling | worker-service ADR-002 says it owns `categories` / `services`; the admin edits them directly. worker-service caches `category:list` for 1 h and nearby/search caches 60 s; the panel does not invalidate them | Delete `category:list` after changes, or use a worker-service endpoint |
-| 17 | Verify DB TLS | `rejectUnauthorized: false` in `lib/db.ts` | Pin the Supabase CA |
-
-### Medium
-
-| # | Issue | Detail |
+| # | Item | Detail |
 |---|---|---|
-| 18 | RBAC inconsistencies | Section 6.4 (`/waitlist` unprotected in middleware, nav vs permission mismatches) |
-| 19 | Sidebar links to `/settings` | No page exists; `settings:view` has no UI except the pricing config API |
-| 20 | No admin-user management | `admin_users:manage` is defined, nothing implements it. The seed script says additional admins "must be created through the admin panel"; they cannot. Role changes, deactivation, MFA reset and "log out everywhere" exist only as SQL / Redis (section 19) |
-| 21 | Audit after commit | `logAdminAction` runs after the transaction; if it throws, the client gets 500 although the action happened. Prefer writing the audit row inside the transaction (bookings, disputes, verification) |
-| 22 | Input validation gaps | User / category / waitlist routes do not UUID-check ids; category PATCH accepts unvalidated `parentId`, `sortOrder`, `iconUrl`; suspend `custom` date is not checked to be in the future; user list contains a dead `where` expression left in the code |
-| 23 | Exports | Users export has no BOM, no audit and uses `<=` on `dateTo` (excludes the last day's evening); workers / bookings / users exports are not audited |
-| 24 | Unsuspend semantics | User unsuspend sets `is_active = true` without checking `banned_at` / `deleted_at`; there is no unban |
-| 25 | Rate limiting only on auth | Data APIs (CSV exports, broadcast, refunds) have no per-admin limits |
-| 26 | Disputes: events differ from booking-service | `booking.dispute_resolved` payload lacks `payment_method`; booking-service emits it |
-| 27 | Quiet hours | Warning only; the old notification-service dropped normal-priority push in 22:00–08:00, the direct engine does not |
-| 28 | `app/auth/layout.tsx`, `DataTable` use undefined CSS variables | Section 15 |
-| 29 | Dead dependencies | `@tanstack/react-query`, `axios`, and the three Supabase env vars (no `@supabase/*` package) |
-| 30 | No tests | Section 17 |
-| 31 | Middleware vs Next 16 `proxy` convention | Verify against the installed version |
+| 1 | Contract bodies to confirm | section 9.2. Until worker, review and search confirm field names the wrappers may need a one-line fix |
+| 2 | Access tokens outlive a ban by ≤ 15 min | needs a `jti` blacklist in the gateway (audit G-21) |
+| 3 | Data APIs have no per-admin rate limit | exports, broadcasts, refunds |
+| 4 | Worker strikes not shown in the worker detail page | `booking_penalties` is readable; add a tab |
+| 5 | Dashboard attention panel ignores `stuckInProgress` | the JSON key is delivered, add a row in `AttentionPanel.tsx` |
+| 6 | `SendTestModal` / booking cancel dialog wording | show "see History" for `null` results; "Fee waiver %" label |
+| 7 | `search_demand_log` stays empty | search-service writes no demand events (audit M-01); the map falls back to bookings |
+| 8 | Off-peak multiplier not applied | stored, configurable, ignored by booking-service pricing |
+| 9 | No unban / undelete for users | |
+| 10 | Middleware vs Next 16 `proxy` convention | verify against the installed version |
+| 11 | Dead components for impersonation | button is hidden by the removed permission; delete the JSX later |
+| 12 | `hasDispute` filter on the users list | accepted and ignored |
 
 ### Roadmap
 
 | Item | Notes |
 |---|---|
-| Outbox relay + dead-letter handling | Highest priority |
-| Admin users page (create, role change, deactivate, reset MFA, log out everywhere, trusted devices list) | Replaces the SQL runbooks |
-| Settings page (pricing config UI exists as components, add the route) | |
-| Replace direct writes with internal endpoints (booking, review, worker) | ADR-002 |
-| Queue-based broadcasts with preference + quiet-hour handling, SMS | ADR-009 |
-| WebSocket / SSE for the live map and activity feed | Currently polling |
-| Per-admin rate limits on data APIs, exports, broadcasts | |
-| Test suite (Vitest for pure logic, Playwright for the auth flow) | |
-| Audit log viewer page (search by admin, action, resource) | Data already collected |
-| Worker documents with signed URLs, access logged per document | Item 4 |
+| Audit log viewer page | data already collected |
+| Playwright test for the auth flow, more Vitest around action routes with mocked service clients | |
+| WebSocket / SSE for map and activity | currently polling |
+| Per-admin rate limits on data APIs | |
+| Read-only "view as user" support tool | replaces impersonation |
+| Move CNIC number saving and re-verification to worker-service endpoints | removes the last worker writes |
+| Settings page: more platform configuration | |
 
 ---
 
 ## 22. Changelog
 
+### v1.1.0: Cross-service audit round 2 (October 2026)
+
+**Added**
+- Service clients `lib/internal-client.ts` and `lib/services/{booking,worker,review,search}.ts`.
+- Worker **suspend** route (the button used to answer 404), worker moderation through worker-service.
+- Settings page with **Pricing** (customer fee, worker commission, multipliers) read by booking-service.
+- **Admin-user management**: API routes and page (create, role, activate / deactivate, sign out everywhere, reset MFA).
+- UUID guard for ids in middleware; `/waitlist`, `/settings`, `/settings/admins` route permissions.
+- Migration runner (`npm run migrate`, `admin_migrations`); migration 016.
+- `get_user_kpis()`, canonical `get_needs_attention()` with stuck in-progress jobs.
+- Booking proof (arrival, start, completion) on the booking location tab.
+- Vitest tests; `npm test`.
+- Export audit for users, workers, bookings; `worker.documents_viewed` audit.
+
+**Changed**
+- Booking cancel / override / reassign / escalate and dispute resolve are calls to booking-service (reassign keeps the same booking; COD "refund %" is a fee waiver).
+- Worker verify / reject / ban / suspend / unsuspend / force-offline go through worker-service; rejection codes now match worker-service.
+- Review moderation goes through review-service.
+- Broadcasts and test sends go through the gateway side door (notification-service).
+- Dashboard revenue, chart and revenue by city use completion time in Karachi like Finance.
+- `logAdminAction` never turns a completed action into a 500.
+- DB TLS can be verified (`DATABASE_CA_CERT`).
+- Dev port 3100; waitlist permissions match the nav; SUPPORT sees Workers in the nav.
+- Worker earnings from completed bookings; blocked-workers uses the category join; user "reports" = disputes the user opened.
+
+**Fixed**
+- `admin_audit_log.resource_id` was `UUID` but category, service and pricing audits write slugs: those actions returned 500 after committing.
+- Every new worker was blocked at approval ("No identity document") because the panel required `NATIONAL_ID` / `PASSPORT` while worker-service stores `CNIC_FRONT` / `CNIC_BACK`.
+- KYC documents were returned as raw URLs.
+- Outbox events written by admin actions were never published (payment never refunded disputes, worker slots stayed wrong).
+- Review hides never changed ratings.
+- Ban / suspend left stale `user:status:*` caches.
+- Catalog edits did not invalidate worker-service caches.
+- Users KPI endpoint failed on a fresh database (`get_user_kpis()` missing).
+- Malformed ids returned 500.
+- Broadcasts to all users timed out and left the campaign in `SENDING`; marketing opt-outs and quiet hours were ignored.
+
+**Removed**
+- Impersonation (endpoint answers 410), `lib/direct-broadcast-engine.ts`, `lib/firebase-admin.ts`, Firebase scripts, Supabase env keys, unused dependencies, `admin_event_outbox` writers.
+
 ### v1.0.0: First documented release (October 2026)
-
-**Documented**
-- Authentication: password + mandatory TOTP, backup codes, trusted devices, rotating refresh sessions, concurrency cap, CSRF origin check.
-- RBAC: 4 roles, 48 permissions, edge + handler enforcement.
-- Modules: Dashboard, Waitlist, Users, Workers, Worker Verification, Bookings (list, board, detail, actions), Disputes & Refunds, Payments & Finance, Reviews & Ratings (+ rating audit), Notifications (direct FCM broadcast), Live Map, Analytics, Categories & Pricing.
-- 15 migrations, 121 API routes, audit action catalogue, Redis key map.
-- Cross-service contract and 31 known issues.
-
-**Not covered in this version**
-- The domain UI components under `components/<module>` were reviewed only through their hooks, types and routes.
-- `components/map/MapView.tsx` (Mapbox token variable name), `eslint.config.mjs`, `postcss.config.mjs`.
+Authentication (password + mandatory TOTP, backup codes, trusted devices, rotating sessions), RBAC (4 roles), all modules, 15 migrations, 121 API routes, audit catalogue, Redis key map.
 
 ---
 
 > **Questions?** #backend in Slack · **Bug?** GitHub issue under the admin panel repo.
-> **Changing a shared table or a column the other services read?** Tell their owners first (section 4.3 and 9.3).
-> **Touching auth, sessions or RBAC?** Read section 5, 6 and ADR-003 to ADR-006 first, then update this document in the same pull request.
+> **Changing a shared table or a column the other services read?** Tell their owners first (sections 4.3 and 9.4).
+> **Touching auth, sessions or RBAC?** Read sections 5, 6 and ADR-003 to ADR-006 first, then update this document in the same pull request.

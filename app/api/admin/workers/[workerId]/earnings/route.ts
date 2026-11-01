@@ -1,6 +1,4 @@
 // app/api/admin/workers/[workerId]/earnings/route.ts
-// ASSUMES worker_earnings(worker_id, amount, created_at). If your columns differ this
-// returns available:false and the card says "not wired up yet" instead of erroring.
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
@@ -20,16 +18,18 @@ export async function GET(
     const { rows } = await db.query(
       `WITH m AS (
          SELECT (date_trunc('month', now() AT TIME ZONE 'Asia/Karachi') AT TIME ZONE 'Asia/Karachi') AS this_start
+       ), done AS (
+         SELECT b.worker_amount, COALESCE(b.completed_at, b.updated_at) AS at
+           FROM bookings b
+          WHERE b.worker_id = $1 AND b.status::text IN ('COMPLETED', 'AUTO_COMPLETED')
        )
        SELECT
-         COALESCE(sum(e.amount), 0) AS lifetime,
-         COALESCE(sum(e.amount) FILTER (WHERE e.created_at >= m.this_start), 0) AS this_month,
-         COALESCE(sum(e.amount) FILTER (
-           WHERE e.created_at >= m.this_start - interval '1 month' AND e.created_at < m.this_start
-         ), 0) AS last_month,
+         COALESCE(sum(d.worker_amount), 0) AS lifetime,
+         COALESCE(sum(d.worker_amount) FILTER (WHERE d.at >= m.this_start), 0) AS this_month,
+         COALESCE(sum(d.worker_amount) FILTER (
+           WHERE d.at >= m.this_start - interval '1 month' AND d.at < m.this_start), 0) AS last_month,
          (SELECT currency FROM workers WHERE id = $1) AS currency
-       FROM m
-       LEFT JOIN worker_earnings e ON e.worker_id = $1
+       FROM m LEFT JOIN done d ON true
        GROUP BY m.this_start`,
       [workerId]
     )
@@ -41,16 +41,7 @@ export async function GET(
       thisMonth: Number(r?.this_month ?? 0),
       lastMonth: Number(r?.last_month ?? 0),
     })
-  } catch (err: any) {
-    if (err?.code === '42P01' || err?.code === '42703') {
-      return NextResponse.json({
-        available: false,
-        currency: 'PKR',
-        lifetime: 0,
-        thisMonth: 0,
-        lastMonth: 0,
-      })
-    }
+  } catch (err) {
     console.error('[GET worker earnings]', err)
     return NextResponse.json({ error: 'Failed to load earnings' }, { status: 500 })
   }

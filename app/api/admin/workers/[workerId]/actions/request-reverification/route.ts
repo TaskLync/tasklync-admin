@@ -6,6 +6,8 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { isUuid, workerNotFound } from '@/lib/workers-api'
+import { workerSvc } from '@/lib/services/worker'
+import { searchSvc } from '@/lib/services/search'
 
 export async function POST(
   req: NextRequest,
@@ -42,6 +44,9 @@ export async function POST(
       { status: 409 }
     )
   }
+
+  await workerSvc.invalidateWorkerCache(workerId)
+  await searchSvc.reindexWorker(workerId)
 
   await logAdminAction({
     adminId: guard.admin.adminId,

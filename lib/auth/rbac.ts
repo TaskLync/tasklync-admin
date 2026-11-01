@@ -19,15 +19,15 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'settings:view': ['SUPER_ADMIN'],
   'settings:edit': ['SUPER_ADMIN'],
   'admin_users:manage': ['SUPER_ADMIN'],
-  'waitlist:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
-  'waitlist:manage': ['SUPER_ADMIN', 'OPS'], // status changes (pending → invited → converted)
+  // Same set as the sidebar entry, so the page and the nav can never disagree.
+  'waitlist:view': ['SUPER_ADMIN', 'OPS'],
+  'waitlist:manage': ['SUPER_ADMIN', 'OPS'],
 
-  // Users moderation
+  // Users moderation (impersonation removed)
   'users:warn': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
   'users:suspend': ['SUPER_ADMIN', 'OPS'],
   'users:ban': ['SUPER_ADMIN'],
   'users:edit': ['SUPER_ADMIN', 'OPS'],
-  'users:impersonate': ['SUPER_ADMIN'],
 
   // Categories & Services
   'categories:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
@@ -58,29 +58,28 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
 
   // Disputes
   'disputes:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
-  'disputes:resolve': ['SUPER_ADMIN', 'OPS'], // escalated disputes: SUPER_ADMIN only, enforced in the resolve route
-  'disputes:assign': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // claim / release
+  'disputes:resolve': ['SUPER_ADMIN', 'OPS'], // escalated: SUPER_ADMIN only, enforced in the route
+  'disputes:assign': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
   'disputes:escalate': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
-  'disputes:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // internal notes
+  'disputes:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
 
   // Notifications
   'notifications:view': ['SUPER_ADMIN', 'OPS'],
   'notifications:send': ['SUPER_ADMIN', 'OPS'],
-  'notifications:broadcast-all': ['SUPER_ADMIN'], // all users / all workers
+  'notifications:broadcast-all': ['SUPER_ADMIN'],
 
-    // Live map
+  // Live map
   'map:view': ['SUPER_ADMIN', 'OPS'],
 
-    // Reviews & ratings
+  // Reviews & ratings
   'reviews:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
-  'reviews:moderate': ['SUPER_ADMIN', 'OPS'], // hide / restore / dismiss reports
-  'reviews:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'], // internal notes
+  'reviews:moderate': ['SUPER_ADMIN', 'OPS'],
+  'reviews:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
 }
 
-// Maps URL path prefixes -> required permission, used by middleware.ts
-// NOTE: order matters. permissionForPath uses find() + startsWith, so more specific prefixes must come first.
+// Path prefix -> permission, used by middleware.ts. Order matters (find() + startsWith): specific before general.
 export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
-  { prefix: '/workers/verification', permission: 'workers:verify' }, // must stay above '/workers'
+  { prefix: '/workers/verification', permission: 'workers:verify' }, // above '/workers'
   { prefix: '/workers', permission: 'workers:view' },
   { prefix: '/users', permission: 'users:view' },
   { prefix: '/bookings', permission: 'bookings:view' },
@@ -89,9 +88,11 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/notifications', permission: 'notifications:view' },
   { prefix: '/analytics', permission: 'analytics:view' },
   { prefix: '/categories', permission: 'categories:view' },
+  { prefix: '/settings/admins', permission: 'admin_users:manage' }, // above '/settings'
   { prefix: '/settings', permission: 'settings:view' },
   { prefix: '/map', permission: 'map:view' },
   { prefix: '/reviews', permission: 'reviews:view' },
+  { prefix: '/waitlist', permission: 'waitlist:view' },
 ]
 
 export function hasPermission(role: AdminRole, permission: string): boolean {

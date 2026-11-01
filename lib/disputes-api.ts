@@ -12,14 +12,8 @@ import {
 } from '@/lib/dispute-constants'
 import type { DisputeListItem } from '@/types/dispute'
 
-// Same transaction + outbox helpers the booking actions use.
-export {
-  enqueueBookingEvent,
-  enqueueNotification,
-  lockBooking,
-  setActor,
-  withTx,
-} from '@/lib/bookings-api'
+// Same transaction helpers the booking actions use.
+export { lockBooking, setActor, withTx } from '@/lib/bookings-api'
 
 const CATEGORY_RE = /^[a-z0-9-]{1,50}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/

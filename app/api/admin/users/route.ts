@@ -16,6 +16,8 @@ const SORT_COLUMNS: Record<string, string> = {
   total_bookings: 'u.total_bookings',
 }
 
+const HAS_DISPUTE_SQL = 'EXISTS (SELECT 1 FROM disputes d WHERE d.raised_by = u.id)'
+
 export async function GET(req: NextRequest) {
   const guard = await requirePermission('users:view')
   if (!guard.ok) return guard.response
@@ -34,9 +36,7 @@ export async function GET(req: NextRequest) {
   const pageSize = Math.min(100, Math.max(1, parseInt(sp.get('pageSize') || '20', 10)))
   const offset = (page - 1) * pageSize
 
-  const where: string[] = ['u.deleted_at IS NULL OR $__include_deleted']
-  // deleted_at handling folded into status filter below instead of a blanket exclude
-  where.length = 0
+  const where: string[] = []
 
   const params: any[] = []
   let i = 1
@@ -66,6 +66,12 @@ export async function GET(req: NextRequest) {
     where.push(BOOKING_BUCKETS[bookingsBucket])
   }
 
+  if (hasDispute === 'yes') {
+    where.push(HAS_DISPUTE_SQL)
+  } else if (hasDispute === 'no') {
+    where.push(`NOT ${HAS_DISPUTE_SQL}`)
+  }
+
   if (dateFrom) {
     params.push(dateFrom)
     where.push(`u.created_at >= $${i}`)
@@ -73,14 +79,9 @@ export async function GET(req: NextRequest) {
   }
   if (dateTo) {
     params.push(dateTo)
-    where.push(`u.created_at <= $${i}`)
+    where.push(`u.created_at < ($${i}::date + 1)`)
     i++
   }
-
-  // has_dispute: disputes table doesn't exist yet in the schema I was given.
-  // Kept as a no-op filter (accepted, ignored) so the UI control works
-  // end-to-end without erroring — wire the EXISTS(...) once disputes ships.
-  void hasDispute
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
 
@@ -89,6 +90,7 @@ export async function GET(req: NextRequest) {
       u.id, u.name, u.phone, u.email, u.avatar_url,
       u.total_bookings, u.is_active, u.created_at,
       fn_user_status(u.is_active, u.deleted_at, u.banned_at, u.suspended_until) AS status,
+      ${HAS_DISPUTE_SQL} AS has_dispute,
       (SELECT a.city FROM user_addresses a WHERE a.user_id = u.id AND a.is_default = true LIMIT 1) AS city
     FROM users u
     ${whereSql}
@@ -115,7 +117,7 @@ export async function GET(req: NextRequest) {
       totalBookings: r.total_bookings,
       isActive: r.is_active,
       status: r.status,
-      hasDispute: false,
+      hasDispute: r.has_dispute,
       createdAt: r.created_at,
     }))
 

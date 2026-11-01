@@ -4,7 +4,7 @@ import { requirePermission } from '@/lib/rbac-guard'
 import { hasPermission } from '@/lib/auth/rbac'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { BROAD_SEGMENTS, LIMITS } from '@/lib/notification-constants'
-import { launchDirectBroadcast } from '@/lib/direct-broadcast-engine'
+import { launchBroadcast } from '@/lib/notification-service'
 import {
   NotificationActionError,
   assertNoRecentDuplicate,
@@ -45,7 +45,8 @@ export async function POST(req: NextRequest) {
 
     await assertNoRecentDuplicate(message.templateKey)
 
-    const result = await launchDirectBroadcast({
+    // notification-service creates the campaign and sends in the background: the answer is 202 for real now.
+    const result = await launchBroadcast({
       title: label,
       template_key: message.templateKey,
       template_data: message.templateData,

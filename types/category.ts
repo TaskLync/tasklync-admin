@@ -77,6 +77,9 @@ export interface ServiceFormInput {
 }
 
 export interface PricingConfig {
+  customerFeePercent: number
+  workerCommissionPercent: number
+  /** informational: customer + worker */
   platformFeePercent: number
   demandThreshold: number
   demandMultiplier: number
@@ -87,6 +90,8 @@ export interface PricingConfig {
 }
 
 export interface PricingConfigInput {
+  customerFeePercent?: number
+  workerCommissionPercent?: number
   platformFeePercent: number
   demandThreshold: number
   demandMultiplier: number

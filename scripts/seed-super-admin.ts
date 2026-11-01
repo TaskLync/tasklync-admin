@@ -25,7 +25,7 @@ async function main() {
   )
   if (rows[0].count >= 2) {
     console.error('Maximum of 2 super admins already exist.')
-    console.error('Additional admins must be created through the admin panel.')
+    console.error('Additional admins: Settings → Admin users.')
     return
   }
 

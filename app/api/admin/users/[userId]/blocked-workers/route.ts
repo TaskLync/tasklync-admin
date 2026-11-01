@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
+import { CATEGORY_NAMES_SQL } from '@/lib/workers-api'
 
 export async function GET(
   req: NextRequest,
@@ -15,7 +16,8 @@ export async function GET(
   try {
     const { rows } = await db.query(
       `SELECT b.id, b.blocked_worker_id, b.created_at,
-              w.name AS worker_name, w.phone AS worker_phone, w.category AS worker_category
+              w.name AS worker_name, w.phone AS worker_phone,
+              ${CATEGORY_NAMES_SQL} AS worker_category
        FROM user_blocks b
        LEFT JOIN workers w ON w.id = b.blocked_worker_id
        WHERE b.user_id = $1
@@ -32,10 +34,9 @@ export async function GET(
         createdAt: r.created_at,
       }))
     )
-  } catch (err: any) {
-    if (err?.code === '42P01' || err?.code === '42703') {
-      return NextResponse.json([])
-    }
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code
+    if (code === '42P01' || code === '42703') return NextResponse.json([])
     console.error('[GET blocked-workers]', err)
     return NextResponse.json({ error: 'Failed to load blocked workers' }, { status: 500 })
   }

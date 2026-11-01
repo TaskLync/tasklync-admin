@@ -4,12 +4,15 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { logAdminAction, getClientIp } from '@/lib/audit'
 import { isUuid, workerNotFound } from '@/lib/workers-api'
+import { workerSvc } from '@/lib/services/worker'
+import { searchSvc } from '@/lib/services/search'
+import { serviceErrorResponse } from '@/lib/internal-client'
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ workerId: string }> }
 ) {
-  const guard = await requirePermission('workers:ban') // SUPER_ADMIN only, per rbac.ts
+  const guard = await requirePermission('workers:ban') // SUPER_ADMIN only
   if (!guard.ok) return guard.response
 
   const { workerId } = await params
@@ -17,32 +20,31 @@ export async function POST(
 
   const body = await req.json().catch(() => ({}))
   const reason: string = body.reason?.trim()
-  if (!reason) {
-    return NextResponse.json({ error: 'A reason is required to ban a worker' }, { status: 400 })
+  if (!reason) return NextResponse.json({ error: 'A reason is required to ban a worker' }, { status: 400 })
+
+  const admin = { id: guard.admin.adminId, email: guard.admin.adminEmail }
+
+  try {
+    // Writes the columns, clears worker/chat/contact caches, emits worker.moderation_changed (search drops the worker in seconds).
+    await workerSvc.moderate(workerId, admin, { action: 'ban', reason })
+
+    // Admin-owned columns
+    await db.query(`UPDATE workers SET is_featured = false, featured_at = NULL WHERE id = $1`, [workerId])
+    void searchSvc.reindexWorker(workerId)
+
+    await logAdminAction({
+      adminId: admin.id,
+      adminEmail: admin.email,
+      action: 'worker.banned',
+      resourceType: 'worker',
+      resourceId: workerId,
+      newValue: { reason },
+      notes: reason,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    return serviceErrorResponse(err, '[POST worker ban]')
   }
-
-  const { rows } = await db.query(
-    `UPDATE workers
-     SET banned_at = now(), banned_reason = $2, banned_by = $3,
-         is_active = false, is_featured = false, featured_at = NULL,
-         updated_at = now()
-     WHERE id = $1 AND deleted_at IS NULL
-     RETURNING banned_at`,
-    [workerId, reason, guard.admin.adminId]
-  )
-  if (rows.length === 0) return workerNotFound()
-
-  await logAdminAction({
-    adminId: guard.admin.adminId,
-    adminEmail: guard.admin.adminEmail,
-    action: 'worker.banned',
-    resourceType: 'worker',
-    resourceId: workerId,
-    newValue: { reason },
-    notes: reason,
-    ip: getClientIp(req),
-    userAgent: req.headers.get('user-agent') ?? undefined,
-  })
-
-  return NextResponse.json({ ok: true })
 }

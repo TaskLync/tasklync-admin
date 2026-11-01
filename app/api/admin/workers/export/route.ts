@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import { buildWorkerWhere, CATEGORY_NAMES_SQL, STATUS_SQL } from '@/lib/workers-api'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 
 function csvEscape(val: unknown): string {
   const s = val === null || val === undefined ? '' : String(val)
@@ -54,6 +55,16 @@ export async function GET(req: NextRequest) {
         ].join(',')
       )
     }
+
+    await logAdminAction({
+      adminId: guard.admin.adminId,
+      adminEmail: guard.admin.adminEmail,
+      action: 'workers.exported',
+      resourceType: 'workers',
+      notes: `${result.rows.length} rows, filters: ${req.nextUrl.searchParams.toString().slice(0, 300)}`,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
 
     // BOM so Excel opens UTF-8 names correctly
     return new NextResponse('\uFEFF' + lines.join('\n'), {

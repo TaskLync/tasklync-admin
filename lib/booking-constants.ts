@@ -76,13 +76,13 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]
 export const CANCELLABLE_BY_ADMIN: BookingStatus[] = ['PENDING', 'ACCEPTED', 'IN_PROGRESS']
 
 /**
- * Forward-only. COMPLETED_BY_WORKER is deliberately NOT a target: it needs a 24h
- * auto-complete job that only booking-service can enqueue.
+ * Forward-only. booking-service enqueues the 24h auto-complete job itself,
+ * so COMPLETED_BY_WORKER is a valid target.
  */
 export const OVERRIDE_TARGETS: Partial<Record<BookingStatus, BookingStatus[]>> = {
   PENDING: ['ACCEPTED'],
   ACCEPTED: ['IN_PROGRESS'],
-  IN_PROGRESS: ['COMPLETED'],
+  IN_PROGRESS: ['COMPLETED_BY_WORKER', 'COMPLETED'],
   COMPLETED_BY_WORKER: ['COMPLETED'],
 }
 
@@ -90,9 +90,6 @@ export const OVERRIDE_TARGETS: Partial<Record<BookingStatus, BookingStatus[]>> =
 export const ESCALATABLE: BookingStatus[] = ['COMPLETED_BY_WORKER']
 
 export const REASSIGNABLE: BookingStatus[] = ['PENDING', 'ACCEPTED']
-
-/** Must match BOOKING_TIMEOUT_MINUTES in booking-service. */
-export const BOOKING_TIMEOUT_MINUTES = 30
 
 /** Maps a status to the Kafka event booking-service would have produced. */
 export const STATUS_EVENT: Partial<Record<BookingStatus, string>> = {
@@ -104,6 +101,7 @@ export const STATUS_EVENT: Partial<Record<BookingStatus, string>> = {
 }
 
 /**
+ * COD: nothing is prepaid, so this is the share of the platform fee that is WAIVED.
  * Refund matrix from the booking-service doc (section 7):
  * PENDING 100% | ACCEPTED >24h 90% | ACCEPTED <24h 50% | IN_PROGRESS 0%
  */

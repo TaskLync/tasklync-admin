@@ -68,7 +68,7 @@ export default function DataTable<T>({
       <div className="flex flex-col items-center gap-2 rounded-lg border border-gray-200 bg-white py-10 text-sm text-gray-500">
         <p>Couldn't load this data.</p>
         {onRetry && (
-          <button onClick={onRetry} className="text-[--accent] hover:underline">
+          <button onClick={onRetry} className="text-accent hover:underline">
             Retry
           </button>
         )}

@@ -1,9 +1,11 @@
 // app/api/admin/workers/[workerId]/documents/route.ts
-// Gated by workers:verify (SUPER_ADMIN, OPS): these are CNIC / passport images.
+// Gated by workers:verify. URLs are signed by worker-service and expire after ~15 minutes.
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
+import { logAdminAction, getClientIp } from '@/lib/audit'
 import { isUuid, workerNotFound } from '@/lib/workers-api'
+import { workerSvc, mapSignedDocuments } from '@/lib/services/worker'
+import { serviceErrorResponse } from '@/lib/internal-client'
 
 export async function GET(
   req: NextRequest,
@@ -16,28 +18,23 @@ export async function GET(
   if (!isUuid(workerId)) return workerNotFound()
 
   try {
-    const { rows } = await db.query(
-      `SELECT id, type::text AS type, file_url, status::text AS status,
-              rejection_note, reviewed_at, created_at
-       FROM worker_documents
-       WHERE worker_id = $1
-       ORDER BY created_at DESC`,
-      [workerId]
-    )
-    return NextResponse.json(
-      rows.map((r) => ({
-        id: r.id,
-        type: r.type,
-        fileUrl: r.file_url,
-        status: r.status,
-        rejectionNote: r.rejection_note,
-        reviewedAt: r.reviewed_at,
-        createdAt: r.created_at,
-      }))
-    )
-  } catch (err: any) {
-    if (err?.code === '42P01') return NextResponse.json([])
-    console.error('[GET worker documents]', err)
-    return NextResponse.json({ error: 'Failed to load documents' }, { status: 500 })
+    const summary = await workerSvc.verificationSummary(workerId)
+    const docs = mapSignedDocuments(summary)
+
+    // Every access to identity documents is logged.
+    await logAdminAction({
+      adminId: guard.admin.adminId,
+      adminEmail: guard.admin.adminEmail,
+      action: 'worker.documents_viewed',
+      resourceType: 'worker',
+      resourceId: workerId,
+      notes: `${docs.length} document(s)`,
+      ip: getClientIp(req),
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    })
+
+    return NextResponse.json(docs)
+  } catch (err) {
+    return serviceErrorResponse(err, '[GET worker documents]')
   }
 }
