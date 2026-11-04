@@ -20,4 +20,9 @@ describe('hasInvalidIdSegment', () => {
   it('does not guard category slugs', () => {
     expect(hasInvalidIdSegment('/api/admin/categories/ac-repair')).toBe(false)
   })
+    it('guards coupon ids but lets batch through', () => {
+    expect(hasInvalidIdSegment('/api/admin/coupons/abc')).toBe(true)
+    expect(hasInvalidIdSegment('/api/admin/coupons/batch')).toBe(false)
+    expect(hasInvalidIdSegment(`/api/admin/coupons/${id}/actions/pause`)).toBe(false)
+  })
 })

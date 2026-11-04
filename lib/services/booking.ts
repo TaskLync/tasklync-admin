@@ -45,3 +45,19 @@ export const bookingSvc = {
       body: { ...who(admin), resolution: input.resolution, note: input.note, refund_amount: input.refundAmount },
     }),
 }
+
+export const couponSvc = {
+  list: (query: Record<string, string | number | undefined>) =>
+    callService<{ items: unknown[]; total: number; page: number; page_size: number }>(
+      target(), 'GET', '/internal/admin/coupons', { query }),
+  get: (id: string) => callService(target(), 'GET', `/internal/admin/coupons/${id}`),
+  redemptions: (id: string, query: Record<string, string | number | undefined>) =>
+    callService(target(), 'GET', `/internal/admin/coupons/${id}/redemptions`, { query }),
+  create: (admin: AdminIdentity, body: object) =>
+    callService(target(), 'POST', '/internal/admin/coupons', { body: { ...who(admin), ...body } }),
+  batch: (admin: AdminIdentity, body: object) =>
+    callService<{ batch_id: string; count: number; codes: string[] }>(
+      target(), 'POST', '/internal/admin/coupons/batch', { body: { ...who(admin), ...body }, timeoutMs: 30_000 }),
+  action: (id: string, action: string, admin: AdminIdentity, body: object = {}) =>
+    callService(target(), 'POST', `/internal/admin/coupons/${id}/${action}`, { body: { ...who(admin), ...body } }),
+}

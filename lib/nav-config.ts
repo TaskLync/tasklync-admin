@@ -12,6 +12,7 @@ import {
   ListPlus,
   Star,
   Bell,
+  Ticket,
   Map,
   Tags,
   Settings,
@@ -92,6 +93,12 @@ export const NAV_ITEMS: NavItem[] = [
     href: '/notifications',
     icon: Bell,
     allowedRoles: ['SUPER_ADMIN', 'OPS'],
+  },
+  {
+    label: 'Coupons',
+    href: '/coupons',
+    icon: Ticket,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
   },
   {
     label: 'Live Map',

@@ -128,6 +128,21 @@ export const CATALOG: CatalogTemplate[] = [
     },
   },
   {
+    id: 'coupon_gift', name: 'Coupon gift',
+    description: 'Send a coupon code. Create the coupon in Coupons first, then paste the code here.',
+    kind: 'promo', category: 'marketing', audience: 'users',
+    variables: [
+      { key: 'code', label: 'Coupon code', type: 'text', placeholder: 'EID26' },
+      { key: 'offer', label: 'Offer', type: 'text', placeholder: 'PKR 150 off' },
+      { key: 'expiry', label: 'Valid until', type: 'text', placeholder: '30 Nov' },
+    ],
+    deepLink: USER_LINK,
+    copy: {
+      en: { title: 'A gift for you', body: 'Use code {{code}} for {{offer}}. Valid until {{expiry}}.' },
+      ur: { title: 'Aap ke liye tohfa', body: 'Code {{code}} istemal karein: {{offer}}. {{expiry}} tak valid.' },
+    },
+  },
+  {
     id: 'worker_demand_high', name: 'Worker: demand is high',
     description: 'Ask workers in an area to go online. For automatic spikes the service already sends category_trending_nudge.',
     kind: 'promo', category: 'marketing', audience: 'workers',

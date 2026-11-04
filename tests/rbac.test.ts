@@ -22,4 +22,13 @@ describe('rbac', () => {
     expect(hasPermission('OPS', 'settings:edit')).toBe(false)
     expect(hasPermission('SUPER_ADMIN', 'settings:edit')).toBe(true)
   })
+    it('coupons: view for all, create and manage for SUPER_ADMIN and OPS, approval for SUPER_ADMIN and FINANCE', () => {
+    expect(hasPermission('SUPPORT', 'coupons:view')).toBe(true)
+    expect(hasPermission('SUPPORT', 'coupons:create')).toBe(false)
+    expect(hasPermission('OPS', 'coupons:manage')).toBe(true)
+    expect(hasPermission('OPS', 'coupons:approve-high')).toBe(false)
+    expect(hasPermission('FINANCE', 'coupons:approve-high')).toBe(true)
+    expect(hasPermission('FINANCE', 'coupons:create')).toBe(false)
+    expect(permissionForPath('/coupons/abc')).toBe('coupons:view')
+  })
 })

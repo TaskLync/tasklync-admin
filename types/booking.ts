@@ -119,6 +119,9 @@ export interface BookingPricing {
   currency: string
   refundAmount: number | null
   refundPercentage: number | null
+  discountAmount: number
+  subtotalBeforeDiscount: number | null
+  couponCode: string | null
 }
 
 export interface BookingDetail {

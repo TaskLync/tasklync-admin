@@ -34,7 +34,7 @@ export default function BookingSummary({ booking }: { booking: BookingDetail }) 
   const cur = p.currency
   const isHourly = p.priceType === 'hourly'
   const baseTotal = isHourly ? p.basePrice * booking.durationHours : p.basePrice
-  const feePct = p.estimatedTotal > 0 ? (p.platformFee / p.estimatedTotal) * 100 : 0
+  const feePct = p.estimatedTotal + p.discountAmount > 0 ? (p.platformFee / (p.estimatedTotal + p.discountAmount)) * 100 : 0
   const refund = p.refundAmount ?? 0
   const finalAmount = p.estimatedTotal - refund
 
@@ -82,6 +82,14 @@ export default function BookingSummary({ booking }: { booking: BookingDetail }) 
           <Row label="Urgency multiplier">× {p.urgencyMultiplier}</Row>
           <Row label="Demand multiplier">× {p.demandMultiplier}</Row>
           <Row label="Time-of-day multiplier">× {p.timeOfDayMultiplier}</Row>
+          {p.discountAmount > 0 && (
+            <>
+              <Row label="Subtotal before coupon">{formatPkr(p.subtotalBeforeDiscount ?? 0, cur)}</Row>
+              <Row label={`Coupon${p.couponCode ? ` (${p.couponCode})` : ''}, funded by the platform`}>
+                <span className="text-[#DC2626]">− {formatPkr(p.discountAmount, cur)}</span>
+              </Row>
+            </>
+          )}
           <div className="my-1 border-t border-gray-100" />
           <Row label="Quoted total">
             <span className="font-semibold">{formatPkr(p.estimatedTotal, cur)}</span>

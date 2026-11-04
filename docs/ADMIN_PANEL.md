@@ -1,13 +1,13 @@
 # TaskLync: Admin Panel
-### Internal Engineering Documentation · v1.1.0
+### Internal Engineering Documentation · v1.2.0
 > **Classification:** Internal · Engineering Team Only
 > **Owner:** Backend Platform Team
-> **Last Updated:** October 2026
-> **Status:** 🟡 In Development (round 2 audit fixes applied)
-> **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3100`
+> **Last Updated:** November 2026
+> **Status:** 🟡 In Development (round 2 audit fixes applied, Coupons module added)
+> **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3200`
 > **Repo location of this file:** `docs/ADMIN_PANEL.md`
 
-This document replaces v1.0.0. What changed is listed in section 22.
+This document replaces v1.1.0. What changed is listed in section 22.
 
 ---
 
@@ -40,7 +40,7 @@ This document replaces v1.0.0. What changed is listed in section 22.
 
 ## 1. Service Overview
 
-The **Admin Panel** is the internal operations dashboard of TaskLync: moderation of users and workers, KYC verification, booking operations, disputes, finance views, reviews moderation, broadcast notifications, live map, analytics, catalog, pricing and admin-user management.
+The **Admin Panel** is the internal operations dashboard of TaskLync: moderation of users and workers, KYC verification, booking operations, disputes, finance views, reviews moderation, broadcast notifications, **coupons**, live map, analytics, catalog, pricing and admin-user management.
 
 It is **one Next.js (App Router) application** with a UI and a BFF layer (`app/api/admin/*`). It has its own authentication, separate from auth-service. It **reads** the shared PostgreSQL (Supabase) database with `pg`, and since v1.1.0 it **changes other services' data only by calling their internal APIs**, with a few documented exceptions (section 9).
 
@@ -55,7 +55,7 @@ It is **one Next.js (App Router) application** with a UI and a BFF layer (`app/a
 | DB | `pg` pool, raw SQL, no ORM, verified TLS when `DATABASE_CA_CERT` is set |
 | Cache / sessions | `ioredis` (must be the shared Redis) |
 | Auth | `jose` (HS256 JWT), `bcryptjs`, `otplib`, `qrcode` |
-| Validation | `zod` on auth routes, hand-written checks elsewhere |
+| Validation | `zod` on auth and coupon routes, hand-written checks elsewhere |
 | Maps / charts | `mapbox-gl`, `recharts` |
 | Tests | `vitest` |
 | Hosting | Vercel or any Node host behind a proxy that overwrites `x-real-ip` |
@@ -65,7 +65,7 @@ It is **one Next.js (App Router) application** with a UI and a BFF layer (`app/a
 ### What this service does NOT do
 
 - Customer or worker login (auth-service).
-- Booking, payment, review, notification **business logic**. It calls those services.
+- Booking, payment, review, notification, **coupon** business logic. It calls those services.
 - Firebase push. notification-service sends all push and SMS (the panel no longer holds a Firebase key).
 - Impersonation (removed in v1.1.0).
 
@@ -80,10 +80,13 @@ OWNS (writes, created by admin migrations):
   ├── admin_event_outbox   DEPRECATED, nothing writes it any more
   └── search_demand_log    (table is ours; search-service may write to it, the map falls back to bookings otherwise)
 
+  (Coupons: the panel owns NO coupon tables. Coupon data and rules live in booking-service.)
+
 ADDS COLUMNS to tables owned by others (additive, IF NOT EXISTS): users, workers, bookings, disputes, reviews, review_reports  (section 4.3)
 
 CALLS (server side, X-Internal-Key):
   ├── booking-service   /internal/admin/*   cancel, override-status, reassign, escalate, dispute resolve
+  │                     /internal/admin/coupons/*   list, get, redemptions, create, batch, pause, resume, end, extend, approve, reject
   ├── worker-service    /internal/admin/*   verify, reject, moderation, signed verification summary; /internal/cache/invalidate
   ├── review-service    PATCH /internal/reviews/:id/moderate
   ├── search-service    POST /internal/reindex/:workerId
@@ -101,6 +104,7 @@ WRITES DIRECTLY (admin-owned columns or no owner API yet):
 READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages, worker_locations, user_addresses,
        user_blocks, worker_skills, worker_service_offerings, worker_recurring_availability, worker_blocked_dates,
        reviewable_bookings, notification_preferences, booking_penalties, bookings, disputes, reviews
+       (bookings now includes the coupon columns written by booking-service migration 013, see 4.3)
 ```
 
 ### Key numbers
@@ -108,10 +112,10 @@ READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages
 | Metric | Value |
 |---|---|
 | Admin roles | 4: `SUPER_ADMIN`, `OPS`, `FINANCE`, `SUPPORT` |
-| Permissions | 47 (impersonation removed) |
-| Admin pages | 14 modules + 3 auth pages |
-| API route handlers | 126 |
-| Migrations | 16 (`db/migrations/001` to `016`) |
+| Permissions | **51** (impersonation removed in v1.1.0, 4 `coupons:*` added in v1.2.0) |
+| Admin pages | **15** modules + 3 auth pages |
+| API route handlers | **131** |
+| Migrations | 16 (`db/migrations/001` to `016`); **no 017**, coupon data is owned by booking-service |
 | Access token TTL | 15 min |
 | Session life | 8 h or 7 d (remembered device), absolute |
 | Concurrent sessions per admin | 3 |
@@ -119,7 +123,7 @@ READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages
 | MFA | mandatory for every role by default |
 | DB pool | max 10 |
 | Super admins | max 2 |
-| Dev port | **3100** (3000 is the API gateway) |
+| Dev port | **3200** (`next dev -p 3200` in `package.json`; 3000 is the API gateway) |
 | Day boundary for all KPIs and money | Asia/Karachi, completion time for revenue |
 
 ---
@@ -153,7 +157,7 @@ Browser request → middleware.ts (edge)
   ├─ verify admin_access JWT (sig, alg, iss, aud, exp, type, scope)
   ├─ no valid token: API → 401 JSON, page → refresh redirect or /auth/login
   ├─ scope = mfa_setup → only MFA enrolment
-  ├─ API path with an id segment that is not a UUID               → 404 JSON   (new)
+  ├─ API path with an id segment that is not a UUID               → 404 JSON   (static segments such as coupons/batch are whitelisted)
   └─ page path → permission (ROUTE_PERMISSIONS); missing → redirect /
   ▼
 Route handler
@@ -180,7 +184,7 @@ Route handler
 ### Conventions
 
 - **Single SQL source of truth** for list, counts and CSV export.
-- **Derived status**, never stored (`fn_user_status`, `fn_worker_status`, `fn_worker_presence`).
+- **Derived status**, never stored (`fn_user_status`, `fn_worker_status`, `fn_worker_presence`). Coupons follow the same idea: the display `state` is derived from `status` and the validity window (`stateOf`).
 - **Availability-aware reads**: `{ available: false, data: [] }` on SQL error `42P01` / `42703`.
 - **Reason required** on every destructive action; it goes to the audit log.
 - **One owner per table.** The panel calls the owner's API instead of writing its tables (ADR-002, ADR-013).
@@ -196,25 +200,28 @@ tasklync-admin/
 ├── app/
 │   ├── auth/ (login, mfa, mfa-setup)
 │   ├── (admin)/ analytics bookings categories disputes map notifications payments reviews users waitlist workers
-│   │            settings/page.tsx  settings/admins/page.tsx                         # NEW
+│   │            coupons/page.tsx  coupons/[couponId]/page.tsx                        # NEW v1.2.0
+│   │            settings/page.tsx  settings/admins/page.tsx
 │   └── api/admin/ (auth, analytics, bookings, categories, dashboard, disputes, map, notifications, payments,
-│                   pricing-config, reviews, users, waitlist, workers,
-│                   admins/                                                          # NEW: admin-user management)
+│                   pricing-config, reviews, users, waitlist, workers, admins,
+│                   coupons/ (route.ts, batch/, [couponId]/ (route.ts, redemptions/, actions/[action]/)))   # NEW v1.2.0
 ├── components/ layout auth shared ui analytics bookings categories dashboard disputes map notifications
 │               payments reviews users verification waitlist workers
-│               settings/PricingSettings.tsx                                         # NEW
-├── db/migrations/001 … 016_*.sql
-├── hooks/  lib/  scripts/  types/  tests/                                            # tests/ is NEW
+│               settings/PricingSettings.tsx
+│               coupons/ CouponsSection.tsx CouponFormDialog.tsx CouponDetailView.tsx   # NEW v1.2.0
+├── db/migrations/001 … 016_*.sql                                                     # no 017: coupons are owned by booking-service
+├── hooks/  lib/  scripts/  types/  tests/
+│   hooks/useCoupons.ts  types/coupon.ts  tests/coupons.test.ts                       # NEW v1.2.0
 ├── lib/
-│   ├── auth/       config cookies crypto issue jwt mfa password rate-limit rbac redirect request session trusted-device
-│   │               uuid-guard.ts                                                     # NEW
-│   ├── services/   booking.ts worker.ts review.ts search.ts                          # NEW (internal API clients)
-│   ├── internal-client.ts cache.ts                                                   # NEW
+│   ├── auth/       config cookies crypto issue jwt mfa password rate-limit rbac redirect request session trusted-device uuid-guard
+│   ├── services/   booking.ts (+ couponSvc) worker.ts review.ts search.ts            # internal API clients
+│   ├── internal-client.ts cache.ts
 │   ├── db.ts redis.ts audit.ts rbac-guard.ts auth-fetch.ts swr-fetcher.ts cn.ts nav-config.ts
 │   ├── notification-service.ts notifications-api.ts notification-catalog.ts notification-constants.ts
 │   ├── payment-service.ts payments-api.ts payment-constants.ts
 │   ├── bookings-api.ts booking-constants.ts disputes-api.ts dispute-constants.ts
 │   ├── reviews-api.ts review-constants.ts verification-api.ts verification-constants.ts
+│   ├── coupons-api.ts coupon-constants.ts                                            # NEW v1.2.0
 │   └── workers-api.ts map-api.ts map-constants.ts map-geo.ts analytics-api.ts analytics-constants.ts parse-user-agent.ts
 └── scripts/ migrate.ts  seed-super-admin.ts  generate-broadcast-templates.ts
     (removed: setup-firebase.ts, encode-firebase-credentials.ps1, test-direct-broadcast.ts)
@@ -233,7 +240,7 @@ Run with `npm run migrate` (tracks applied files in `admin_migrations`; on an ex
 
 | # | File | What it does |
 |---|---|---|
-| 001 | `admin_auth` | `admin_users`, `admin_mfa_backup_codes`, `admin_audit_log` |
+| 001 | `admin_auth` | `admin_users`, `admin_mfa_backup_codes`, `admin_audit_log` (original file still has `resource_id UUID`; 016 fixes it, this is expected) |
 | 002 | `dashboard_functions` | `platform_events` + triggers, dashboard functions (superseded by 016 for KPIs, revenue and needs-attention) |
 | 003 | `waitlist_functions` | `pg_trgm`, waitlist indexes and functions |
 | 004 | `users_moderation` | moderation columns on `users`, `fn_user_status`, `get_user_overview` |
@@ -249,6 +256,8 @@ Run with `npm run migrate` (tracks applied files in `admin_migrations`; on an ex
 | 014 | `reviews_admin` | moderation audit columns, report resolution, notes |
 | 015 | `admin_session_hardening` | `admin_trusted_devices`, unique `LOWER(email)` |
 | **016** | `round2_hardening` | `admin_audit_log.resource_id` → VARCHAR(100); pricing config split into customer fee and worker commission; `get_user_kpis()`; dashboard KPIs, revenue chart and revenue by city on **one date basis (completion time, Karachi)**; **canonical `get_needs_attention()`** (adds stuck `IN_PROGRESS` jobs); RLS on admin tables; outbox marked deprecated |
+
+**No 017.** The Coupons module needs no admin migration: there are no admin-owned coupon tables, coupon data is owned by booking-service. The only schema dependency is **booking-service migration 013** (not to be confused with admin `013_live_map`, they are separate numbering schemes), which adds the discount columns on `bookings` that the booking detail query reads (section 4.3).
 
 **Run order matters:** every migration after 001 needs other services' tables first. `get_needs_attention()` was redefined in 002, 010 and 014; **016 holds the final definition**. If you ever re-run 002, 010 or 014, run section 5 of 016 again.
 
@@ -285,6 +294,8 @@ admin_migrations ( id, name UNIQUE, ran_at )
 | `reviews`, `review_reports` | `moderated_*`, `moderation_note`, `resolved_at/by` | review-service migration creates the same columns |
 
 All `ADD COLUMN IF NOT EXISTS`. Tell the owning team before changing any of them.
+
+**Columns the panel only READS (added by booking-service migration 013, not by the panel):** `bookings.discount_amount`, `bookings.subtotal_before_discount`, `bookings.coupon_code_masked`. The booking detail query (`app/api/admin/bookings/[bookingId]/route.ts`) selects them, so **booking-service migration 013 must be applied before this panel version is deployed**. This is the one exception to "the panel reads no coupon data in SQL": every other coupon read and write goes through the booking-service internal API.
 
 ### 4.4 Database functions and triggers
 
@@ -352,16 +363,16 @@ bcrypt 12 rounds (12–72 bytes, upper + lower + digit); TOTP secrets AES-256-GC
 
 ## 6. RBAC (Roles & Permissions)
 
-Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/nav-config.ts` (now consistent with the permissions).
+Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/nav-config.ts` (consistent with the permissions).
 
 ### 6.1 Roles
 
 | Role | Purpose |
 |---|---|
-| `SUPER_ADMIN` | Everything: ban, create categories, edit pricing, broadcast to all, resolve escalated disputes, manage admins |
-| `OPS` | Operations: verification, workers / users moderation (except ban), bookings, disputes, notifications, map, reviews, waitlist |
-| `FINANCE` | Payments, analytics, dashboard, categories (read) |
-| `SUPPORT` | Read-mostly: users, workers (read), bookings, disputes, reviews, with warn / note / escalate |
+| `SUPER_ADMIN` | Everything: ban, create categories, edit pricing, broadcast to all, resolve escalated disputes, manage admins, create / manage / approve coupons |
+| `OPS` | Operations: verification, workers / users moderation (except ban), bookings, disputes, notifications, map, reviews, waitlist, create and manage coupons |
+| `FINANCE` | Payments, analytics, dashboard, categories (read), coupons (view and second approver for high-budget / uncapped coupons) |
+| `SUPPORT` | Read-mostly: users, workers (read), bookings, disputes, reviews, coupons (view), with warn / note / escalate |
 
 ### 6.2 Permission matrix
 
@@ -387,23 +398,28 @@ Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/n
 | `map:view` | ✓ | ✓ | | |
 | `reviews:view`, `:note` | ✓ | ✓ | | ✓ |
 | `reviews:moderate` | ✓ | ✓ | | |
+| `coupons:view` | ✓ | ✓ | ✓ | ✓ |
+| `coupons:create` | ✓ | ✓ | | |
+| `coupons:manage` (pause, resume, end, extend) | ✓ | ✓ | | |
+| `coupons:approve-high` (second approver for uncapped / high-budget coupons; approve and reject) | ✓ | | ✓ | |
 | `categories:create`, `:edit`, `services:edit` | ✓ | | | |
 | `settings:view`, `settings:edit`, `admin_users:manage` | ✓ | | | |
 
-`users:impersonate` no longer exists.
+`users:impersonate` no longer exists. Total: **51** permissions.
 
 ### 6.3 Enforcement points
 
-1. **Middleware**: path prefix → permission (`/workers/verification` before `/workers`; `/settings/admins` before `/settings`; `/waitlist` and `/settings` are now listed). Missing permission → redirect `/` for pages, 403 JSON for API.
-2. **Every API handler** starts with `requirePermission('x:y')`.
+1. **Middleware**: path prefix → permission (`/workers/verification` before `/workers`; `/settings/admins` before `/settings`; `/waitlist`, `/settings` and `/coupons` are listed). Missing permission → redirect `/` for pages, 403 JSON for API.
+2. **Every API handler** starts with `requirePermission('x:y')`. The coupon action route maps each action to its permission (`ACTIONS` in `lib/coupons-api.ts`): `pause`, `resume`, `end`, `extend` → `coupons:manage`; `approve`, `reject` → `coupons:approve-high`.
 3. **Inline rules**: escalated disputes, claim rules, broadcast-all, last Super Admin protection.
-4. **UI**: `Sidebar` filters `NAV_ITEMS`; `usePermission()` hides buttons. Cosmetic only; the API decides.
+4. **Four-eyes on coupons** is enforced in **booking-service**, not in the panel: the creator of a coupon can never approve their own coupon (403 `COUPON_FOUR_EYES`). FINANCE can approve but not create. Financial guardrails (percent cap, platform-take cap, high-budget threshold) are booking-service **environment settings**, not UI, so OPS and SUPPORT cannot change them.
+5. **UI**: `Sidebar` filters `NAV_ITEMS`; `usePermission()` hides buttons. Cosmetic only; the API decides.
 
 ### 6.4 Remaining RBAC notes
 
 - `/` (dashboard) has no route permission; every full-scope admin may open it (all four roles have `dashboard:view`).
 
-### 6.5 Admin-user management (new)
+### 6.5 Admin-user management
 
 `Settings → Admin users` (`/settings/admins`, SUPER_ADMIN): list, create (temporary password, MFA forced at first login), change role, activate / deactivate, sign out everywhere, reset MFA. Rules: you cannot change yourself, the last active Super Admin cannot be demoted or deactivated, at most 2 Super Admins. Every change destroys that admin's Redis sessions (and trusted devices on deactivate or MFA reset) immediately.
 
@@ -411,7 +427,7 @@ Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/n
 
 ## 7. API Reference
 
-Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin check. Errors `{ "error": "message", code? }`. Lists `{ data, page, pageSize, total, totalPages }`. A malformed `:id` on users / workers / bookings / disputes / reviews / payouts / campaigns / admins returns `404` from middleware.
+Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin check. Errors `{ "error": "message", code? }`. Lists `{ data, page, pageSize, total, totalPages }`. A malformed `:id` on users / workers / bookings / disputes / reviews / payouts / campaigns / admins / **coupons** returns `404` from middleware (`/api/admin/coupons/batch` is whitelisted as a static segment).
 
 ### 7.1 Auth (`/auth`)
 
@@ -444,7 +460,7 @@ Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin c
 | GET | `/workers/:id`, `/performance`, `/earnings`, `/jobs`, `/reviews`, `/availability`, `/catalog` | view | `earnings` computed from completed bookings |
 | GET | `/workers/:id/documents` | `workers:verify` | **signed URLs from worker-service**, access logged (`worker.documents_viewed`) |
 | POST | `/workers/:id/actions/warn` | `workers:warn` | SQL |
-| POST | `/workers/:id/actions/suspend` | `workers:suspend` | **new**; `{ reason, duration: 7d\|30d\|custom, until? }`; worker-service moderation endpoint |
+| POST | `/workers/:id/actions/suspend` | `workers:suspend` | `{ reason, duration: 7d\|30d\|custom, until? }`; worker-service moderation endpoint |
 | POST | `/workers/:id/actions/unsuspend` | `workers:suspend` | worker-service moderation |
 | POST | `/workers/:id/actions/ban` | `workers:ban` | worker-service moderation + clears featured + search reindex |
 | POST | `/workers/:id/actions/force-offline` | `workers:force-offline` | short moderation suspend (`FORCE_OFFLINE_MINUTES`, default 60) |
@@ -470,7 +486,7 @@ Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin c
 | Method | Path | Permission | Notes |
 |---|---|---|---|
 | GET | `/bookings`, `/board`, `/kpis`, `/export` | `bookings:view` | export audited |
-| GET | `/bookings/:id`, `/timeline`, `/chat`, `/payment`, `/notes` | view | |
+| GET | `/bookings/:id`, `/timeline`, `/chat`, `/payment`, `/notes` | view | `GET /bookings/:id` `pricing` now also returns `discountAmount`, `subtotalBeforeDiscount`, `couponCode` (masked); read from the `bookings` columns added by booking-service migration 013 |
 | GET | `/bookings/:id/location` | view | job site + **proof** (arrival, start, completion distances, start method, cash, photos); no GPS trail exists |
 | GET | `/bookings/:id/reassign-candidates` | `bookings:reassign` | verified, active, same skill, no overlap |
 | POST | `/bookings/:id/notes` | `bookings:note` | |
@@ -521,6 +537,21 @@ Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin c
 | PATCH | `/admins/:id` | manage | `{ role?, isActive? }` |
 | POST | `/admins/:id/reset-mfa`, `/admins/:id/logout-all` | manage | |
 
+### 7.13 Coupons (new in v1.2.0)
+
+All six route files are thin: validate, call booking-service `/internal/admin/coupons/*` through `couponSvc` (`lib/services/booking.ts`), audit, respond. Mapping helpers and zod schemas live in `lib/coupons-api.ts`.
+
+| Method | Path (route file) | Permission | Notes |
+|---|---|---|---|
+| GET | `/coupons` (`coupons/route.ts`) | `coupons:view` | list. Query `status` (`all`, `ACTIVE`, `PAUSED`, `PENDING_APPROVAL`, `EXHAUSTED`, `ENDED`, `REJECTED`, `expired`), `search` (code or title), `page`, `pageSize` (max 100, default 20). Returns `{ data, page, pageSize, total, totalPages }` with a derived `state` per row |
+| POST | `/coupons` (`coupons/route.ts`) | `coupons:create` | create one coupon, 201. Zod-validated (section 8.13). Audit `coupon.created` |
+| POST | `/coupons/batch` (`coupons/batch/route.ts`) | `coupons:create` | generate 1 to 5,000 single-use codes, 201 `{ batchId, count, codes }`. The codes are returned **once**; only count and batch id are audited. 30 s timeout |
+| GET | `/coupons/:couponId` (`coupons/[couponId]/route.ts`) | `coupons:view` | detail with `stats { consumed, released, discountPkr }` and status `history` |
+| GET | `/coupons/:couponId/redemptions` (`…/redemptions/route.ts`) | `coupons:view` | 20 per page, `?page=`. Customer phone **masked to the last 4 digits** (`phoneLast4`) |
+| POST | `/coupons/:couponId/actions/:action` (`…/actions/[action]/route.ts`) | per action | `pause`, `resume`, `end`, `extend` → `coupons:manage`; `approve`, `reject` → `coupons:approve-high`. Unknown action → 404. `reason` (≥ 3 chars) required for `pause`, `end`, `reject` (400 otherwise); `extend` needs a valid `endsAt` (400 otherwise). Audit `coupon.paused` / `resumed` / `ended` / `extended` / `approved` / `rejected` |
+
+Booking detail extra fields are listed in 7.7.
+
 ---
 
 ## 8. Modules & Business Rules
@@ -554,6 +585,8 @@ Board columns `pending`, `accepted`, `in_progress`, `completed_by_worker`, `comp
 
 The panel shows "fee waiver %" for COD. Every action is audited with the reason.
 
+**Discounted bookings (v1.2.0).** The booking summary shows "Subtotal before coupon" and a "Coupon (CODE), funded by the platform" line (the code is masked) when `discountAmount > 0`. "Quoted total" is the discounted total and "Worker payout" is unchanged: workers are always paid in full. The platform fee percentage shown is computed on `estimatedTotal + discountAmount` (the pre-discount base).
+
 ### 8.6 Disputes
 
 Tabs: **open** (needs a decision), **awaiting** (worker still has 24 h), **escalated**, **resolved** (30 days). Claim / release and escalate are admin-owned SQL. **Resolve:** admin checks (escalated needs SUPER_ADMIN, 24 h window needs `overrideWindow`), then booking-service decides the money (`REFUND_GRANTED` = full total waived, `NO_REFUND` = 0, `PARTIAL_REFUND` strictly between 0 and the total), moves the booking to `REFUNDED` or `RESOLVED`, and emits `booking.dispute_resolved` plus notifications.
@@ -572,7 +605,7 @@ POST /notifications/broadcasts
   └─ launchBroadcast() → gateway side door → notification-service
         (creates the campaign, applies opt-outs and quiet hours, sends push and SMS in the background)
 ```
-Templates come from `lib/notification-catalog.ts` (18 templates, English + Roman Urdu); `scripts/generate-broadcast-templates.ts` writes the files for notification-service. The panel holds **no Firebase credentials**.
+Templates come from `lib/notification-catalog.ts` (**19** templates, English + Roman Urdu; v1.2.0 added `coupon_gift`); `scripts/generate-broadcast-templates.ts` writes the files for notification-service. The panel holds **no Firebase credentials**.
 
 ### 8.9 Reviews
 
@@ -590,6 +623,29 @@ Polling: workers 5 s, jobs 15 s, demand 60 s. Demand uses `search_demand_log` an
 
 Category `id` is an immutable slug. **Settings → Pricing** edits the customer fee, worker commission, demand and urgency multipliers; booking-service picks the change up within about 60 seconds and validates it, and existing bookings keep their price. The off-peak multiplier is stored but not applied by booking-service yet.
 
+### 8.13 Coupons (new in v1.2.0)
+
+Platform-funded discount codes. The panel is a UI and BFF only: **rules, redemption and storage live in booking-service**, and the worker is always paid in full. Pages: `/coupons` (list, filters, "New coupon") and `/coupons/:couponId` (detail, redemptions, actions, history). Nav item "Coupons" (`Ticket` icon) for all four roles.
+
+**Create rules** (zod in `lib/coupons-api.ts`, repeated by booking-service which is authoritative):
+
+- Code 4 to 16 characters, letters, digits and dashes. Title 3 to 120 characters (internal), description ≤ 500.
+- `PERCENT` coupons are capped at **50 %**; `FIXED` coupons at **PKR 5,000** (`MAX_PERCENT`, `MAX_FIXED_PKR` in `lib/coupon-constants.ts`).
+- `endsAt` must be after `startsAt` and in the future. Uses per customer 1 to 10 (default 1). Optional total uses, minimum job amount (default 0), category scope (ids, empty = all), first-booking-only flag, assigned user, budget cap.
+- Until subsidy mode is enabled in booking-service, a discount is capped at the platform take (about 10 % of the job value). The dialog tells the admin this.
+
+**Approval (four-eyes).** A coupon with a budget cap at or below the booking-service threshold becomes **Active** immediately. An **uncapped** coupon, or one above the threshold (`COUPON_HIGH_BUDGET_THRESHOLD_PKR`, booking-service env; the panel only shows a display hint, `HIGH_BUDGET_HINT_PKR` = 100,000), becomes **Needs approval** and needs a second admin with `coupons:approve-high` (SUPER_ADMIN or FINANCE). The creator can never approve their own coupon (403 `COUPON_FOUR_EYES` from booking-service). Reject needs a reason.
+
+**Batch.** 1 to 5,000 single-use codes with an optional prefix (up to 6 letters or digits). A **max discount per code** is required. The codes are shown once in the dialog with a CSV download; the audit log stores only the count and batch id, never the codes.
+
+**States.** `status` (stored by booking-service) plus the validity window gives the displayed `state`: Needs approval, Rejected, Scheduled, Active, Paused, Used up, Expired, Ended (`stateOf`). `expired` is also a list filter.
+
+**Actions.** Pause (reason), Resume, Extend (new end date), End now (reason, customers can no longer use it, bookings that already used it keep their discount), Approve, Reject (reason). The list refreshes every 30 s.
+
+**Redemptions.** Each row shows the customer name, **phone masked to the last 4 digits**, a link to the booking, the discount and whether it was used or given back. A redemption is released back (count restored) when the booking is cancelled while still PENDING.
+
+**Broadcast.** The `coupon_gift` template sends a code, offer text and expiry to customers. Create the coupon first, then paste the code into the broadcast.
+
 ---
 
 ## 9. Cross-Service Contract
@@ -600,11 +656,11 @@ Category `id` is an immutable slug. **Settings → Pricing** edits the customer 
 |---|---|---|
 | auth-service, user-service | shared columns + Redis | `users` ban / suspend / `is_active` enforced at login and refresh. The panel deletes `user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` |
 | worker-service | **internal API** + shared columns | `/internal/admin/*` for verification and moderation; `/internal/cache/invalidate` after catalog and worker changes |
-| booking-service | **internal API** | `/internal/admin/*` (section 7.7, 7.8). booking-service emits the events |
+| booking-service | **internal API** | `/internal/admin/*` (section 7.7, 7.8) **and `/internal/admin/coupons/*` (section 7.13)**. booking-service emits the events. Also reads the coupon columns on `bookings` (migration 013) |
 | review-service | **internal API** | `PATCH /internal/reviews/:id/moderate` |
 | search-service | internal API | `POST /internal/reindex/:workerId` after SQL changes (feature, badge, contact, re-verification) |
 | payment-service | HTTP | refunds, payout retry; reads its tables |
-| notification-service | gateway side door | broadcasts and tests |
+| notification-service | gateway side door | broadcasts and tests, including the **`coupon_gift`** broadcast template |
 | chat-service | read | `messages` for the booking chat tab |
 
 ### 9.2 Contract assumptions (confirm against the other services' docs)
@@ -615,6 +671,7 @@ Category `id` is an immutable slug. **Settings → Pricing** edits the customer 
 | review-service moderate body `{ action, note, admin_id }` | `lib/services/review.ts` |
 | search-service reindex route | `lib/services/search.ts` |
 | booking-service `/internal/admin/*` (defined by booking v3.1.0) | `lib/services/booking.ts` |
+| booking-service `/internal/admin/coupons/*` (list, get, redemptions, create, batch, `:id/<action>`): snake_case body and row fields (`code_display`, `discount_type`, `budget_spent_pkr`, `stats.discount_pkr`, …), error code `COUPON_FOUR_EYES` | `lib/services/booking.ts` (`couponSvc`), `lib/coupons-api.ts` (`toServiceBody`, `mapCoupon`) |
 
 A mismatch is a one-line fix in the wrapper; the routes do not change.
 
@@ -626,11 +683,11 @@ The panel produces **no Kafka events** any more. `admin_event_outbox` is depreca
 
 | Team | Required |
 |---|---|
-| booking | v3.1.0 deployed first; reads `platform_pricing_config`; emits events for admin actions |
+| booking | v3.1.0 deployed first; **migration 013 (coupons) deployed before this panel version**; `/internal/admin/coupons/*` live; reads `platform_pricing_config`; emits events for admin actions; enforces four-eyes and the guardrails (env) |
 | worker | confirm the internal admin contract; consume `booking.reassigned` with `old_worker_id` / `new_worker_id`; keep `worker_badges` / `worker_verification_reviews` schema |
 | review | confirm the moderate body; emit `review.moderated` |
 | search | confirm `/internal/reindex/:id` |
-| notification | dispute and admin templates; keep the gateway side door |
+| notification | dispute and admin templates; **deploy the regenerated broadcast template files (incl. `coupon_gift`)**; keep the gateway side door |
 | payment | COD `refund_kind = FEE_WAIVER` moves no money; confirm port (3017 vs 3005) |
 | all services | DB roles must bypass RLS |
 
@@ -643,15 +700,15 @@ The panel produces **no Kafka events** any more. `admin_event_outbox` is depreca
 | Transport / headers | HSTS (1 y), `X-Frame-Options: DENY`, `nosniff`, strict referrer, empty Permissions-Policy, `Cache-Control: no-store` on `/auth/*` and `/api/admin/*` |
 | CSRF | SameSite=Lax cookies plus Origin = Host check on every unsafe `/api/*` call |
 | Authn | Password + mandatory TOTP, trusted devices, lockout, per-IP and per-email limits, constant-time dummy hash |
-| Authz | Permission per route with Redis session; `mfa_setup` scope reaches nothing else |
+| Authz | Permission per route with Redis session; `mfa_setup` scope reaches nothing else; coupon approval is four-eyes (booking-service) |
 | Sessions | Rotating refresh, theft detection, 3 sessions, deactivation / role change / MFA reset kill sessions at once |
 | Secrets at rest | TOTP AES-256-GCM, backup codes HMAC, passwords bcrypt, refresh and device secrets hashed |
 | Service-to-service | `X-Internal-Key` per target service (own variable, fallback `INTERNAL_API_KEY`), read at call time, never sent to the browser |
-| Input | UUID guard for ids in middleware; zod on auth routes; whitelists for sort columns, enums, tabs; all values bound as `$n` |
+| Input | UUID guard for ids in middleware; zod on auth and coupon routes; whitelists for sort columns, enums, tabs; all values bound as `$n` |
 | SQL | Parameterised; interpolated values are whitelisted constants only |
 | DB | TLS verified when `DATABASE_CA_CERT` is set; RLS on admin tables |
-| PII | Payout / refund destinations masked; **KYC images only as 15-minute signed URLs and every access logged**; CSV formula-injection guard on finance exports |
-| Audit | Every mutation writes `admin_audit_log`; all exports audited |
+| PII | Payout / refund destinations masked; coupon redemption phone numbers masked to the last 4; **KYC images only as 15-minute signed URLs and every access logged**; CSV formula-injection guard on finance exports |
+| Audit | Every mutation writes `admin_audit_log`; all exports audited; batch coupon codes are never written to the audit log |
 | Removed | Impersonation endpoint (410), direct Firebase credentials, Supabase keys from `.env.example` |
 
 ### Known limits
@@ -686,12 +743,14 @@ The panel produces **no Kafka events** any more. `admin_event_outbox` is depreca
 | Variable | Used for |
 |---|---|
 | `INTERNAL_API_KEY` | fallback key for every service below |
-| `BOOKING_SERVICE_URL`, `BOOKING_SERVICE_INTERNAL_KEY` | booking actions (`:3004`) |
+| `BOOKING_SERVICE_URL`, `BOOKING_SERVICE_INTERNAL_KEY` | booking actions **and coupons** (`:3004`) |
 | `WORKER_SERVICE_URL`, `WORKER_SERVICE_INTERNAL_KEY` | verification, moderation, cache (`:3003`) |
 | `REVIEW_SERVICE_URL`, `REVIEW_SERVICE_INTERNAL_KEY` | review moderation (`:3007`) |
 | `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_INTERNAL_KEY` | reindex (`:3008`) |
 | `PAYMENT_SERVICE_URL`, `PAYMENT_SERVICE_INTERNAL_KEY` | refunds, payout retry (confirm port 3017 vs 3005) |
 | `API_GATEWAY_URL`, `GATEWAY_ADMIN_KEY` | broadcasts (gateway side door) |
+
+The coupon module adds **no new admin variable**. Its financial guardrails (for example `COUPON_HIGH_BUDGET_THRESHOLD_PKR`) are environment settings of booking-service, deliberately not editable from the UI.
 
 ### Behaviour
 
@@ -722,7 +781,7 @@ Never commit `.env`. A secret shorter than required fails on first use; keys are
 | `admin:totp_used:{adminId}:{code}` | 120 s | TOTP replay protection |
 | `admin:rl:*` | 10 min to 1 h | login, mfa, refresh, mfa-setup limiters |
 
-Keys the panel reads or deletes in other services' namespaces: `worker:location:{id}` (read, optional map overlay); `review:{id}`, `rating:summary:{workerId}` are now cleared by review-service; **`user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` are deleted on every user moderation action**; worker-side keys are cleared by worker-service's moderation and cache endpoints.
+Keys the panel reads or deletes in other services' namespaces: `worker:location:{id}` (read, optional map overlay); `review:{id}`, `rating:summary:{workerId}` are now cleared by review-service; **`user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` are deleted on every user moderation action**; worker-side keys are cleared by worker-service's moderation and cache endpoints. The Coupons module adds no Redis keys.
 
 The auth rate limiter **fails closed** (a Redis error returns 500).
 
@@ -743,6 +802,7 @@ The auth rate limiter **fails closed** (a Redis error returns 500).
 | Payments | `payment.manual_refund`, `payout.retried`, `payments.report_exported` |
 | Reviews | `review.hidden`, `review.restored`, `review.reports_dismissed`, `review.note_added` |
 | Notifications | `notification.broadcast_launched`, `notification.test_dispatched` |
+| Coupons | `coupon.created`, `coupon.approved`, `coupon.rejected`, `coupon.paused`, `coupon.resumed`, `coupon.ended`, `coupon.extended`, `coupon.batch_generated` (resource type `coupon`, or `coupon_batch` for batches; the batch entry holds count, type and value only, never the codes) |
 | Catalog | `category.*`, `service.*`, `pricing_config.updated` (with before and after values) |
 | Waitlist | `waitlist.status_updated`, `waitlist.exported` |
 
@@ -761,6 +821,10 @@ WHERE action IN ('auth.login_failed','auth.mfa_failed','auth.mfa_lockout')
 -- Everyone who opened identity documents this week
 SELECT created_at, admin_email, resource_id FROM admin_audit_log
 WHERE action = 'worker.documents_viewed' AND created_at > now() - interval '7 days' ORDER BY created_at DESC;
+
+-- All actions on one coupon
+SELECT created_at, admin_email, action, notes FROM admin_audit_log
+WHERE resource_type = 'coupon' AND resource_id = '<coupon uuid>' ORDER BY created_at DESC;
 ```
 
 ---
@@ -768,7 +832,7 @@ WHERE action = 'worker.documents_viewed' AND created_at > now() - interval '7 da
 ## 14. Error Handling Standard
 
 - Responses `{ "error": "Human-readable message" }`; service errors add `code`.
-- Calls to other services use `ServiceError` (`lib/internal-client.ts`): the service's own 4xx (400, 403, 404, 409, 422) is passed through with its message; 5xx and unreachable become `502` / `503`.
+- Calls to other services use `ServiceError` (`lib/internal-client.ts`): the service's own 4xx (400, 403, 404, 409, 422) is passed through with its message; 5xx and unreachable become `502` / `503`. Coupon routes use `serviceErrorResponse`; zod failures return 400 `"<field>: <message>"` via `zodResponse`.
 - Domain error classes (`BookingActionError`, `DisputeActionError`, `ReviewActionError`, `VerificationError`, `PaymentActionError`, `NotificationActionError`) are mapped by their `*ErrorResponse` helpers.
 - Postgres: `23505` → 409; `23P01` → 409; `42P01` / `42703` → 503 "run migration X" or `available:false`; `23503` → not found.
 - Unknown: `console.error(tag, err)` + generic 500; no stack traces leak.
@@ -777,8 +841,8 @@ WHERE action = 'worker.documents_viewed' AND created_at > now() - interval '7 da
 |---|---|
 | 400 | validation failed |
 | 401 | no / expired token or destroyed session |
-| 403 | permission, MFA setup required, CSRF origin, escalated dispute |
-| 404 | not found, or `:id` not a UUID |
+| 403 | permission, MFA setup required, CSRF origin, escalated dispute, `COUPON_FOUR_EYES` (creator approving their own coupon) |
+| 404 | not found, or `:id` not a UUID, or unknown coupon action |
 | 409 | conflict or state guard |
 | 410 | removed endpoint (impersonation) |
 | 422 | business rule |
@@ -792,9 +856,9 @@ WHERE action = 'worker.documents_viewed' AND created_at > now() - interval '7 da
 
 Design tokens in `globals.css` (page `#F7F8FA`, surface `#FFFFFF`, border `#E5E7EB`, accent `#1F6F5F`, Inter + JetBrains Mono). Primitives: `Button`, `Input`, `Card`, `Badge`, `StatusBadge`, `DataTable`, `ConfirmDialog`. Layout: 240 px sidebar (64 px collapsed), 56 px header.
 
-- Page pattern: `Section` (filters + tab state) → `KpiGrid` → `FilterBar` → `Table`. Detail pages: `Header`, `Summary`, parties, tabs, action panel.
-- Data: `fetcher` throws `Error(body.error)`; mutations are plain `fetch` in a `*Actions` object, then `mutate()`; 401 handled globally.
-- Poll intervals: 5 s map workers, 15 s map jobs, 30 s dashboard / details / lists, 60 s analytics / finance, 5 s while a campaign is `SENDING`.
+- Page pattern: `Section` (filters + tab state) → `KpiGrid` → `FilterBar` → `Table`. Detail pages: `Header`, `Summary`, parties, tabs, action panel. Coupons follow the same pattern (`CouponsSection`, `CouponDetailView`) without a KPI grid.
+- Data: `fetcher` throws `Error(body.error)`; mutations are plain `fetch` in a `*Actions` object (`couponActions`), then `mutate()`; 401 handled globally.
+- Poll intervals: 5 s map workers, 15 s map jobs, 30 s dashboard / details / lists (coupon list and detail included), 60 s analytics / finance, 5 s while a campaign is `SENDING`.
 - Use `bg-bg-page` and `text-accent` (the old `bg-[--bg-page]` / `text-[--accent]` variables were undefined).
 - COD wording: use **"Fee waiver %"** instead of "Refund %" in the booking cancel dialog.
 - `SendTestModal` must show "see History" when `pushDelivered` is `null`.
@@ -803,32 +867,32 @@ Design tokens in `globals.css` (page `#F7F8FA`, surface `#FFFFFF`, border `#E5E7
 
 ## 16. Local Development Setup
 
-Prerequisites: Node ≥ 20, npm ≥ 10, the shared PostgreSQL (all backend migrations applied first), Redis ≥ 6.2.
+Prerequisites: Node ≥ 20, npm ≥ 10, the shared PostgreSQL (all backend migrations applied first, including booking-service migration 013), Redis ≥ 6.2.
 
 ```powershell
 npm install
 Copy-Item .env.example .env          # DATABASE_URL, REDIS_URL, ADMIN_JWT_SECRET, ADMIN_MFA_ENCRYPTION_KEY + service URLs
 npm run migrate                      # existing database: npm run migrate -- --baseline=015 the first time
 npx tsx scripts/seed-super-admin.ts  # first super admin (max 2)
-npm run dev                          # http://localhost:3100
+npm run dev                          # http://localhost:3200
 ```
 
 First login → password → forced MFA enrolment (save the 10 backup codes) → dashboard. More admins: **Settings → Admin users**.
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` / `build` / `start` / `lint` | Next.js (port 3100) |
+| `npm run dev` / `build` / `start` / `lint` | Next.js (port 3200) |
 | `npm run migrate` | apply new migrations (`admin_migrations` table) |
 | `npm test` | Vitest |
-| `npx tsx scripts/generate-broadcast-templates.ts [outDir]` | push / SMS template files for notification-service |
+| `npx tsx scripts/generate-broadcast-templates.ts [outDir]` | push / SMS template files for notification-service (re-run after catalog changes such as `coupon_gift`) |
 
-Local notes: cookies are `Secure` only in production; Redis must be reachable (the limiter fails closed); to use booking, worker and review actions locally run those services and set their URLs and keys, otherwise the actions answer 503 "not configured".
+Local notes: cookies are `Secure` only in production; Redis must be reachable (the limiter fails closed); to use booking (including coupons), worker and review actions locally run those services and set their URLs and keys, otherwise the actions answer 503 "not configured".
 
 ---
 
 ## 17. Testing
 
-`vitest` with `@` alias. Current tests: UUID id guard, RBAC (impersonation gone, path order, waitlist and settings), review moderation transitions, `safeNextPath`, `mapSignedDocuments` (never exposes raw URLs).
+`vitest` with `@` alias. Current tests: UUID id guard (incl. coupon ids and the `batch` static segment), RBAC (impersonation gone, path order, waitlist and settings, coupon permissions), review moderation transitions, `safeNextPath`, `mapSignedDocuments` (never exposes raw URLs), **coupons** (`tests/coupons.test.ts`: `stateOf` for pending, scheduled, active, expired, exhausted; `couponCreateSchema` rejects percent above 50, fixed above 5,000, `endsAt` in the past and `endsAt` before `startsAt`).
 
 Manual smoke checklist after every deploy:
 
@@ -853,6 +917,13 @@ Manual smoke checklist after every deploy:
 | 17 | Broadcast to one test user | 202 in under a second, campaign visible in History |
 | 18 | Impersonate endpoint | 410 |
 | 19 | Deactivate an admin | their sessions die at once |
+| 20 | SUPPORT opens `/coupons` | list visible, no "New coupon" button |
+| 21 | OPS creates a capped coupon (cap ≤ PKR 100,000) | status Active, audit row `coupon.created` |
+| 22 | OPS creates an uncapped coupon | status Needs approval |
+| 23 | The creator tries to approve it (as SUPER_ADMIN) | 403 `COUPON_FOUR_EYES`; a different FINANCE or SUPER_ADMIN approves it |
+| 24 | Batch of 50 | one-time download of 50 codes, audit row has the count only |
+| 25 | Book with the coupon, then cancel while PENDING | redemption count back to its old value, history shows the redemption as given back |
+| 26 | Booking detail of a discounted booking | coupon line, worker payout unchanged |
 
 ---
 
@@ -862,12 +933,14 @@ Target: Vercel or any Node host. Outbound access to Postgres, Redis, booking, wo
 
 ```
 □ booking-service v3.1.0 deployed first
+□ booking-service coupon migration 013 applied BEFORE this panel version (booking detail reads the new bookings columns)
 □ npm run build and npm run lint pass
-□ Migrations 001 to 016 applied (npm run migrate); get_user_kpis() exists after 016
+□ Migrations 001 to 016 applied (npm run migrate); get_user_kpis() exists after 016. There is no admin migration 017
 □ ADMIN_JWT_SECRET (≥ 48 chars) and ADMIN_MFA_ENCRYPTION_KEY (32 bytes base64) set and backed up separately
 □ DATABASE_URL (shared DB) + DATABASE_CA_CERT; REDIS_URL = the SHARED Redis (≥ 6.2, TLS + password)
 □ All service URLs and internal keys set (section 11); every key matches the target service
 □ API_GATEWAY_URL + GATEWAY_ADMIN_KEY set (broadcasts)
+□ Broadcast templates regenerated (npx tsx scripts/generate-broadcast-templates.ts <path>/notification-service/src/templates) and deployed to notification-service (includes coupon_gift)
 □ The DB role used by the panel bypasses RLS (Supabase postgres)
 □ Proxy overwrites x-real-ip / x-forwarded-for (Vercel does; nginx needs proxy_set_header X-Real-IP $remote_addr)
 □ Super admin seeded; second super admin created as break-glass
@@ -876,7 +949,7 @@ Target: Vercel or any Node host. Outbound access to Postgres, Redis, booking, wo
 □ Mapbox token set; Cloudinary host in next.config.ts matches the real cloud name
 ```
 
-Rollout: apply migrations (additive, safe before code) → deploy → tell owning teams about any new column.
+Rollout: apply migrations (additive, safe before code) → deploy → tell owning teams about any new column. For coupons: booking-service migration 013 and its coupon endpoints first, then the panel, then the notification templates. Existing generated files under `generated-templates/` are only a local review copy.
 
 | Secret rotated | Effect |
 |---|---|
@@ -909,6 +982,11 @@ Rollout: apply migrations (additive, safe before code) → deploy → tell ownin
 | `Review tables are out of date` (503) | run review-service migrations, then `014` |
 | Booking timeline empty | migration 008 not applied |
 | Pricing page saves but prices do not change | booking-service has `PRICING_CONFIG_FROM_DB=false`, or values were out of its accepted range (see its logs) |
+| Booking detail fails with a missing column (`discount_amount`, `coupon_code_masked`) | booking-service coupon migration 013 not applied yet; apply it, no panel change needed |
+| Coupon list answers 502 / 503 | `BOOKING_SERVICE_URL` / key wrong, or booking-service has no `/internal/admin/coupons/*` yet |
+| Approve a coupon answers 403 `COUPON_FOUR_EYES` | the same admin created and tried to approve it; a different FINANCE or SUPER_ADMIN must approve |
+| Coupon stuck in "Needs approval" | uncapped or above the high-budget threshold; a second approver with `coupons:approve-high` is required |
+| Batch codes lost (dialog closed) | the codes are shown once and never stored in the audit log; end the batch's coupons and generate a new batch |
 | Audit write failed (`[audit] FAILED …` in logs) | the action succeeded; copy the JSON entry from the log into `admin_audit_log` |
 
 ```sql
@@ -950,7 +1028,7 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 
 **ADR-011: Availability-aware reads for other services' tables.** Accepted.
 
-**ADR-012: Reason required for every destructive action.** Accepted.
+**ADR-012: Reason required for every destructive action.** Accepted. Applies to coupon pause, end and reject.
 
 **ADR-013: The owning service performs the write and emits the event.** Accepted (v1.1.0). booking, worker and review actions are internal API calls. Benefits: one writer per table, correct side effects (BullMQ jobs, `is_on_job`, caches, search, ratings), no lost events. The panel keeps SQL only for columns it owns.
 
@@ -966,6 +1044,8 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 
 **ADR-019: Pricing is data owned by the admin panel and read by booking-service.** Accepted. Validated and cached on the booking side with env fallback, so a wrong value cannot stop bookings.
 
+**ADR-020: Coupon rules, storage and four-eyes live in booking-service; the panel is UI and BFF only.** Accepted (v1.2.0). No admin-owned coupon tables and no admin migration. All coupon reads and writes use `/internal/admin/coupons/*` via `couponSvc` (ADR-013, ADR-014). The creator can never approve their own coupon, and financial guardrails are booking-service environment settings, not UI, so no panel role can loosen them.
+
 ---
 
 ## 21. Known Issues & Roadmap
@@ -974,7 +1054,7 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 
 | # | Item | Detail |
 |---|---|---|
-| 1 | Contract bodies to confirm | section 9.2. Until worker, review and search confirm field names the wrappers may need a one-line fix |
+| 1 | Contract bodies to confirm | section 9.2. Until worker, review, search and the booking coupon endpoints are confirmed the wrappers may need a one-line fix |
 | 2 | Access tokens outlive a ban by ≤ 15 min | needs a `jti` blacklist in the gateway (audit G-21) |
 | 3 | Data APIs have no per-admin rate limit | exports, broadcasts, refunds |
 | 4 | Worker strikes not shown in the worker detail page | `booking_penalties` is readable; add a tab |
@@ -986,6 +1066,10 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 | 10 | Middleware vs Next 16 `proxy` convention | verify against the installed version |
 | 11 | Dead components for impersonation | button is hidden by the removed permission; delete the JSX later |
 | 12 | `hasDispute` filter on the users list | accepted and ignored |
+| 13 | `BookingActionDialogs.tsx` Reassign text is stale | still says "creates a new pending booking"; booking v3.1.0 reassigns the **same** booking. Correct the string |
+| 14 | Dead component `components/categories/PricingConfigPanel.tsx` | old single-fee form; the live editor is `components/settings/PricingSettings.tsx`. Delete the old file |
+| 15 | Broken link in `app/(admin)/categories/page.tsx` | still links to `/categories/pricing`, which has no page. Point it to `/settings` |
+| 16 | Coupon high-budget hint is display only | `HIGH_BUDGET_HINT_PKR` (100,000) in `lib/coupon-constants.ts` can drift from booking-service's `COUPON_HIGH_BUDGET_THRESHOLD_PKR`; booking-service decides |
 
 ### Roadmap
 
@@ -1002,6 +1086,30 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 ---
 
 ## 22. Changelog
+
+### v1.2.0: Coupons module (November 2026)
+
+**Added**
+- **Coupons module** (`/coupons`, `/coupons/:couponId`): list with filters, create single coupon, batch generation of single-use codes (one-time CSV download), detail page with stats, redemptions and status history, and actions pause, resume, end, extend, approve, reject.
+- 6 API route files under `/api/admin/coupons/*` (5 route handlers for the endpoints plus the dynamic action route; total route handlers 126 → **131**), all calling booking-service `/internal/admin/coupons/*` through `couponSvc` in `lib/services/booking.ts`.
+- 4 permissions: `coupons:view`, `coupons:create`, `coupons:manage`, `coupons:approve-high` (total 47 → **51**); `/coupons` route permission; nav item "Coupons".
+- Four-eyes approval for uncapped / high-budget coupons (enforced in booking-service, FINANCE can approve but not create).
+- UUID guard entry for `/api/admin/coupons/` with the static segment `batch`.
+- New files: `lib/coupon-constants.ts`, `lib/coupons-api.ts`, `types/coupon.ts`, `hooks/useCoupons.ts`, the six route files, two pages, `components/coupons/{CouponsSection,CouponFormDialog,CouponDetailView}.tsx`, `tests/coupons.test.ts`.
+- Booking detail shows the coupon: "Subtotal before coupon" and "Coupon (CODE), funded by the platform" lines; `pricing` gains `discountAmount`, `subtotalBeforeDiscount`, `couponCode`.
+- Broadcast template `coupon_gift` (English + Roman Urdu; catalog now 19 templates).
+- Audit actions `coupon.created`, `coupon.approved`, `coupon.rejected`, `coupon.paused`, `coupon.resumed`, `coupon.ended`, `coupon.extended`, `coupon.batch_generated`.
+- Smoke checks 20 to 26; tests in `tests/rbac.test.ts` and `tests/uuid-guard.test.ts` for coupons.
+
+**Changed**
+- Booking summary platform fee percentage is computed on the pre-discount base (`estimatedTotal + discountAmount`).
+- Deploy order: booking-service migration 013 (coupons) before this panel version. **No admin migration 017** is created.
+
+**Documentation drift corrected**
+- Dev port is **3200** (`next dev -p 3200` in `package.json`), not 3100.
+- `components/categories/PricingConfigPanel.tsx` (old single-fee form) is dead code; the live editor is `components/settings/PricingSettings.tsx`. `app/(admin)/categories/page.tsx` still links to `/categories/pricing`, which has no page (should point to `/settings`).
+- `db/migrations/001_admin_auth.sql` is the original `resource_id UUID` version; migration 016 fixes it, this is expected.
+- `BookingActionDialogs.tsx` Reassign text still says "creates a new pending booking" (booking v3.1.0 reassigns the same booking).
 
 ### v1.1.0: Cross-service audit round 2 (October 2026)
 
@@ -1025,7 +1133,7 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 - Dashboard revenue, chart and revenue by city use completion time in Karachi like Finance.
 - `logAdminAction` never turns a completed action into a 500.
 - DB TLS can be verified (`DATABASE_CA_CERT`).
-- Dev port 3100; waitlist permissions match the nav; SUPPORT sees Workers in the nav.
+- Dev port 3100 (corrected to 3200 in v1.2.0); waitlist permissions match the nav; SUPPORT sees Workers in the nav.
 - Worker earnings from completed bookings; blocked-workers uses the category join; user "reports" = disputes the user opened.
 
 **Fixed**

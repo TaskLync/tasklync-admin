@@ -75,6 +75,12 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'reviews:view': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
   'reviews:moderate': ['SUPER_ADMIN', 'OPS'],
   'reviews:note': ['SUPER_ADMIN', 'OPS', 'SUPPORT'],
+
+    // Coupons (rules live in booking-service)
+  'coupons:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'coupons:create': ['SUPER_ADMIN', 'OPS'],
+  'coupons:manage': ['SUPER_ADMIN', 'OPS'],           // pause, resume, end, extend
+  'coupons:approve-high': ['SUPER_ADMIN', 'FINANCE'], // second approver for uncapped / high budget coupons
 }
 
 // Path prefix -> permission, used by middleware.ts. Order matters (find() + startsWith): specific before general.
@@ -92,6 +98,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/settings', permission: 'settings:view' },
   { prefix: '/map', permission: 'map:view' },
   { prefix: '/reviews', permission: 'reviews:view' },
+  { prefix: '/coupons', permission: 'coupons:view' },
   { prefix: '/waitlist', permission: 'waitlist:view' },
 ]
 
