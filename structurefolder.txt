@@ -1,4 +1,4 @@
-﻿admin folder tree
+﻿admin panel folder tree
 app
 components
 db
@@ -37,6 +37,7 @@ app\layout.tsx
 app\(admin)\analytics
 app\(admin)\bookings
 app\(admin)\categories
+app\(admin)\coupons
 app\(admin)\disputes
 app\(admin)\map
 app\(admin)\notifications
@@ -55,6 +56,9 @@ app\(admin)\bookings\[bookingId]\page.tsx
 app\(admin)\categories\[categoryId]
 app\(admin)\categories\page.tsx
 app\(admin)\categories\[categoryId]\page.tsx
+app\(admin)\coupons\[couponId]
+app\(admin)\coupons\page.tsx
+app\(admin)\coupons\[couponId]\page.tsx
 app\(admin)\disputes\[disputeId]
 app\(admin)\disputes\page.tsx
 app\(admin)\disputes\[disputeId]\page.tsx
@@ -86,6 +90,7 @@ app\api\admin\analytics
 app\api\admin\auth
 app\api\admin\bookings
 app\api\admin\categories
+app\api\admin\coupons
 app\api\admin\dashboard
 app\api\admin\disputes
 app\api\admin\map
@@ -173,6 +178,16 @@ app\api\admin\categories\[categoryId]\services\[serviceId]\actions
 app\api\admin\categories\[categoryId]\services\[serviceId]\route.ts
 app\api\admin\categories\[categoryId]\services\[serviceId]\actions\toggle-active
 app\api\admin\categories\[categoryId]\services\[serviceId]\actions\toggle-active\route.ts
+app\api\admin\coupons\batch
+app\api\admin\coupons\[couponId]
+app\api\admin\coupons\route.ts
+app\api\admin\coupons\batch\route.ts
+app\api\admin\coupons\[couponId]\actions
+app\api\admin\coupons\[couponId]\redemptions
+app\api\admin\coupons\[couponId]\route.ts
+app\api\admin\coupons\[couponId]\actions\[action]
+app\api\admin\coupons\[couponId]\actions\[action]\route.ts
+app\api\admin\coupons\[couponId]\redemptions\route.ts
 app\api\admin\dashboard\activity
 app\api\admin\dashboard\attention
 app\api\admin\dashboard\funnel
@@ -361,6 +376,7 @@ components\analytics
 components\auth
 components\bookings
 components\categories
+components\coupons
 components\dashboard
 components\disputes
 components\layout
@@ -410,6 +426,9 @@ components\categories\CategoryTable.tsx
 components\categories\PricingConfigPanel.tsx
 components\categories\ServiceFormDialog.tsx
 components\categories\ServicesSection.tsx
+components\coupons\CouponDetailView.tsx
+components\coupons\CouponFormDialog.tsx
+components\coupons\CouponsSection.tsx
 components\dashboard\ActivityFeed.tsx
 components\dashboard\AttentionPanel.tsx
 components\dashboard\BookingFunnel.tsx
@@ -626,6 +645,7 @@ hooks\useAdminSession.ts
 hooks\useAnalytics.ts
 hooks\useBookings.ts
 hooks\useCategories.ts
+hooks\useCoupons.ts
 hooks\useDashboard.ts
 hooks\useDisputes.ts
 hooks\useMap.ts
@@ -648,6 +668,8 @@ lib\booking-constants.ts
 lib\bookings-api.ts
 lib\cache.ts
 lib\cn.ts
+lib\coupon-constants.ts
+lib\coupons-api.ts
 lib\db.ts
 lib\dispute-constants.ts
 lib\disputes-api.ts
@@ -701,6 +723,7 @@ types\analytics.ts
 types\auth.ts
 types\booking.ts
 types\category.ts
+types\coupon.ts
 types\dashboard.ts
 types\dispute.ts
 types\map.ts

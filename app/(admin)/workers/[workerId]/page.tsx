@@ -7,6 +7,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useWorkerDetail } from '@/hooks/useWorkers'
 import WorkerProfileHeader from '@/components/workers/WorkerProfileHeader'
 import WorkerPerformance from '@/components/workers/WorkerPerformance'
+import WorkerRankingPanel from '@/components/workers/WorkerRankingPanel'
 import WorkerEarnings from '@/components/workers/WorkerEarnings'
 import WorkerJobHistory from '@/components/workers/WorkerJobHistory'
 import WorkerReviewHistory from '@/components/workers/WorkerReviewHistory'
@@ -43,6 +44,7 @@ export default function WorkerDetailPage({ params }: { params: Promise<{ workerI
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="flex flex-col gap-4 lg:col-span-2">
             <WorkerPerformance workerId={worker.id} />
+            <WorkerRankingPanel workerId={worker.id} />
             <WorkerEarnings workerId={worker.id} />
             <WorkerJobHistory workerId={worker.id} />
             <WorkerReviewHistory workerId={worker.id} />

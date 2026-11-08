@@ -13,6 +13,8 @@ import {
   Star,
   Bell,
   Ticket,
+  Percent,
+  ListOrdered,
   Map,
   Tags,
   Settings,
@@ -99,6 +101,18 @@ export const NAV_ITEMS: NavItem[] = [
     href: '/coupons',
     icon: Ticket,
     allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  },
+  {
+    label: 'Promotions',
+    href: '/promotions',
+    icon: Percent,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  },
+  {
+    label: 'Ranking',
+    href: '/settings/ranking',
+    icon: ListOrdered,
+    allowedRoles: ['SUPER_ADMIN', 'OPS'],
   },
   {
     label: 'Live Map',

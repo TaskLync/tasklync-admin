@@ -81,6 +81,17 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'coupons:create': ['SUPER_ADMIN', 'OPS'],
   'coupons:manage': ['SUPER_ADMIN', 'OPS'],           // pause, resume, end, extend
   'coupons:approve-high': ['SUPER_ADMIN', 'FINANCE'], // second approver for uncapped / high budget coupons
+
+  // Promotions (worker-funded offers, rules live in booking-service)
+  'promotions:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'promotions:approve': ['SUPER_ADMIN', 'OPS'],   // approve, reject
+  'promotions:suspend': ['SUPER_ADMIN', 'OPS'],   // pause, resume, end
+  'settings:promotions': ['SUPER_ADMIN'],         // guardrails
+
+  // Ranking (policy lives in search-service, facts in worker-service)
+  'ranking:view': ['SUPER_ADMIN', 'OPS'],
+  'ranking:flag': ['SUPER_ADMIN', 'OPS'],         // worker ranking flags
+  'ranking:config': ['SUPER_ADMIN'],              // versions, activate, shadow, overrides, simulate
 }
 
 // Path prefix -> permission, used by middleware.ts. Order matters (find() + startsWith): specific before general.
@@ -94,11 +105,13 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/notifications', permission: 'notifications:view' },
   { prefix: '/analytics', permission: 'analytics:view' },
   { prefix: '/categories', permission: 'categories:view' },
+  { prefix: '/settings/ranking', permission: 'ranking:view' }, // above '/settings/admins' and '/settings'
   { prefix: '/settings/admins', permission: 'admin_users:manage' }, // above '/settings'
   { prefix: '/settings', permission: 'settings:view' },
   { prefix: '/map', permission: 'map:view' },
   { prefix: '/reviews', permission: 'reviews:view' },
   { prefix: '/coupons', permission: 'coupons:view' },
+  { prefix: '/promotions', permission: 'promotions:view' },
   { prefix: '/waitlist', permission: 'waitlist:view' },
 ]
 

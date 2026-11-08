@@ -34,7 +34,10 @@ export default function BookingSummary({ booking }: { booking: BookingDetail }) 
   const cur = p.currency
   const isHourly = p.priceType === 'hourly'
   const baseTotal = isHourly ? p.basePrice * booking.durationHours : p.basePrice
-  const feePct = p.estimatedTotal + p.discountAmount > 0 ? (p.platformFee / (p.estimatedTotal + p.discountAmount)) * 100 : 0
+  const isWorkerFunded = p.discountFunding === 'WORKER'
+  // platform-funded: platform_fee is on the pre-discount base. worker-funded: the fee is already on the smaller subtotal.
+  const feeBase = p.estimatedTotal + (isWorkerFunded ? 0 : p.discountAmount)
+  const feePct = feeBase > 0 ? (p.platformFee / feeBase) * 100 : 0
   const refund = p.refundAmount ?? 0
   const finalAmount = p.estimatedTotal - refund
 
@@ -84,8 +87,14 @@ export default function BookingSummary({ booking }: { booking: BookingDetail }) 
           <Row label="Time-of-day multiplier">× {p.timeOfDayMultiplier}</Row>
           {p.discountAmount > 0 && (
             <>
-              <Row label="Subtotal before coupon">{formatPkr(p.subtotalBeforeDiscount ?? 0, cur)}</Row>
-              <Row label={`Coupon${p.couponCode ? ` (${p.couponCode})` : ''}, funded by the platform`}>
+              <Row label="Subtotal before discount">{formatPkr(p.subtotalBeforeDiscount ?? 0, cur)}</Row>
+              <Row
+                label={
+                  isWorkerFunded
+                    ? `Worker offer${p.couponCode ? ` (${p.couponCode})` : ''}, funded by the worker`
+                    : `Coupon${p.couponCode ? ` (${p.couponCode})` : ''}, funded by the platform`
+                }
+              >
                 <span className="text-[#DC2626]">− {formatPkr(p.discountAmount, cur)}</span>
               </Row>
             </>
@@ -96,6 +105,11 @@ export default function BookingSummary({ booking }: { booking: BookingDetail }) 
           </Row>
           <Row label={`Platform fee (${feePct.toFixed(0)}%)`}>{formatPkr(p.platformFee, cur)}</Row>
           <Row label="Worker payout">{formatPkr(p.workerAmount, cur)}</Row>
+          {isWorkerFunded && p.workerAmountBeforeDiscount !== null && (
+            <Row label="Worker payout without the offer">
+              <span className="text-gray-500">{formatPkr(p.workerAmountBeforeDiscount, cur)}</span>
+            </Row>
+          )}
           {refund > 0 && (
             <Row label={`Refund${p.refundPercentage !== null ? ` (${p.refundPercentage}%)` : ''}`}>
               <span className="text-[#DC2626]">− {formatPkr(refund, cur)}</span>

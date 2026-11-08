@@ -61,3 +61,16 @@ export const couponSvc = {
   action: (id: string, action: string, admin: AdminIdentity, body: object = {}) =>
     callService(target(), 'POST', `/internal/admin/coupons/${id}/${action}`, { body: { ...who(admin), ...body } }),
 }
+
+export const promotionSvc = {
+  list: (query: Record<string, string | number | undefined>) =>
+    callService<{ items: unknown[]; total: number; page: number; page_size: number }>(
+      target(), 'GET', '/internal/admin/promotions', { query }),
+  get: (id: string) => callService(target(), 'GET', `/internal/admin/promotions/${id}`),
+  settings: () => callService(target(), 'GET', '/internal/admin/promotions/settings'),
+  updateSettings: (admin: AdminIdentity, body: object) =>
+    callService(target(), 'PUT', '/internal/admin/promotions/settings', { body: { ...who(admin), ...body } }),
+  /** approve | reject | pause | resume | end */
+  action: (id: string, action: string, admin: AdminIdentity, body: object = {}) =>
+    callService(target(), 'POST', `/internal/admin/promotions/${id}/${action}`, { body: { ...who(admin), ...body } }),
+}

@@ -27,7 +27,7 @@ interface CallOptions {
 
 export async function callService<T = unknown>(
   target: ServiceTarget,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   opts: CallOptions = {}
 ): Promise<T> {

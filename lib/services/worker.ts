@@ -55,6 +55,17 @@ export const workerSvc = {
       body: { ...who(admin), action: input.action, reason: input.reason, until: input.until },
     }),
 
+  /** Performance facts + active flags + last 30 days + top customers (worker-service owns them). */
+  performance: (workerId: string) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    callService<Record<string, any>>(target(), 'GET', `/internal/admin/workers/${workerId}/performance`),
+
+  /** add | revoke a ranking flag. worker-service recomputes the multiplier and publishes worker.stats_updated. */
+  rankingFlag: (workerId: string, admin: AdminIdentity, body: object) =>
+    callService<{ flag_id: string; revoked?: boolean }>(
+      target(), 'POST', `/internal/admin/workers/${workerId}/ranking-flags`, { body: { ...who(admin), ...body } }
+    ),
+
   /** H-15: call after every catalog (category / service) write, or when a worker row changes by SQL. */
   invalidateCatalogCache: () =>
     bestEffort('worker-service catalog cache', () =>

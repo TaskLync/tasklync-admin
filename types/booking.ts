@@ -122,6 +122,9 @@ export interface BookingPricing {
   discountAmount: number
   subtotalBeforeDiscount: number | null
   couponCode: string | null
+  discountFunding: 'PLATFORM' | 'WORKER' | null
+  promotionId: string | null
+  workerAmountBeforeDiscount: number | null
 }
 
 export interface BookingDetail {

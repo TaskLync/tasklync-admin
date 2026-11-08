@@ -12,6 +12,8 @@ const GUARDS: { prefix: string; statics: string[] }[] = [
   { prefix: '/api/admin/notifications/campaigns/', statics: [] },
   { prefix: '/api/admin/admins/', statics: [] },
   { prefix: '/api/admin/coupons/', statics: ['batch'] },
+  { prefix: '/api/admin/promotions/', statics: ['settings'] },
+  { prefix: '/api/admin/ranking/overrides/', statics: [] },
 ]
 
 /** true when the path has an id segment that is not a UUID. */
