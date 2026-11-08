@@ -1,13 +1,13 @@
 # TaskLync: Admin Panel
-### Internal Engineering Documentation · v1.3.0
+### Internal Engineering Documentation · v1.3.1
 > **Classification:** Internal · Engineering Team Only
 > **Owner:** Backend Platform Team
 > **Last Updated:** November 2026
-> **Status:** 🟡 In Development (round 2 audit fixes applied, Coupons module added, Promotions and Ranking modules added)
+> **Status:** 🟡 In Development (round 2 audit fixes applied, Coupons module added, Promotions and Ranking modules added, Ranking explain page added)
 > **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3200`
 > **Repo location of this file:** `docs/ADMIN_PANEL.md`
 
-This document replaces v1.2.0. What changed is listed in section 22.
+This document replaces v1.3.0. What changed is listed in section 22.
 
 ---
 
@@ -40,7 +40,7 @@ This document replaces v1.2.0. What changed is listed in section 22.
 
 ## 1. Service Overview
 
-The **Admin Panel** is the internal operations dashboard of TaskLync: moderation of users and workers, KYC verification, booking operations, disputes, finance views, reviews moderation, broadcast notifications, **coupons**, **worker promotions**, **search ranking**, live map, analytics, catalog, pricing and admin-user management.
+The **Admin Panel** is the internal operations dashboard of TaskLync: moderation of users and workers, KYC verification, booking operations, disputes, finance views, reviews moderation, broadcast notifications, **coupons**, **worker promotions**, **search ranking (including the per-worker "Why this rank?" explain page)**, live map, analytics, catalog, pricing and admin-user management.
 
 It is **one Next.js (App Router) application** with a UI and a BFF layer (`app/api/admin/*`). It has its own authentication, separate from auth-service. It **reads** the shared PostgreSQL (Supabase) database with `pg`, and since v1.1.0 it **changes other services' data only by calling their internal APIs**, with a few documented exceptions (section 9).
 
@@ -94,7 +94,7 @@ CALLS (server side, X-Internal-Key):
   │                     /internal/admin/workers/:id/performance, /internal/admin/workers/:id/ranking-flags
   ├── review-service    PATCH /internal/reviews/:id/moderate
   ├── search-service    POST /internal/reindex/:workerId
-  │                     /internal/ranking/*   configs, activate, shadow, overrides, simulate
+  │                     /internal/ranking/*   configs, activate, shadow, overrides, simulate, explain (v1.3.1, read only)
   ├── payment-service   POST /internal/refunds, POST /internal/payouts/:id/retry
   └── API gateway       POST /internal-admin/notifications/broadcasts  (x-admin-internal-key)
 
@@ -118,9 +118,9 @@ READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages
 | Metric | Value |
 |---|---|
 | Admin roles | 4: `SUPER_ADMIN`, `OPS`, `FINANCE`, `SUPPORT` |
-| Permissions | **58** (impersonation removed in v1.1.0, 4 `coupons:*` added in v1.2.0, 7 `promotions:*` / `settings:promotions` / `ranking:*` added in v1.3.0) |
-| Admin pages | **17** modules + 3 auth pages |
-| API route handlers | **146** |
+| Permissions | **58** (impersonation removed in v1.1.0, 4 `coupons:*` added in v1.2.0, 7 `promotions:*` / `settings:promotions` / `ranking:*` added in v1.3.0; **v1.3.1 adds none**) |
+| Admin pages | **17** modules + 3 auth pages (the explain page is a sub page of the Ranking module) |
+| API route handlers | **147** (v1.3.1 added `GET /workers/:id/ranking-explain`) |
 | Migrations | 16 (`db/migrations/001` to `016`); **no 017**, coupon, promotion and ranking data are owned by other services |
 | Access token TTL | 15 min |
 | Session life | 8 h or 7 d (remembered device), absolute |
@@ -195,6 +195,7 @@ Route handler
 - **Availability-aware reads**: `{ available: false, data: [] }` on SQL error `42P01` / `42703`.
 - **Reason required** on every destructive action; it goes to the audit log.
 - **One owner per table.** The panel calls the owner's API instead of writing its tables (ADR-002, ADR-013). Ranking tables have one writer, search-service (ADR-022).
+- **Explain from the same SQL.** The ranking explain numbers are built from the same SQL builders as the real ranking, so they cannot drift from what search does (ADR-023).
 
 ---
 
@@ -210,29 +211,33 @@ tasklync-admin/
 │   │            coupons/page.tsx  coupons/[couponId]/page.tsx
 │   │            promotions/page.tsx  promotions/[promotionId]/page.tsx                 # NEW v1.3.0
 │   │            settings/page.tsx  settings/admins/page.tsx  settings/ranking/page.tsx # ranking NEW v1.3.0
+│   │            settings/ranking/explain/[workerId]/page.tsx                           # NEW v1.3.1
 │   └── api/admin/ (auth, analytics, bookings, categories, dashboard, disputes, map, notifications, payments,
 │                   pricing-config, reviews, users, waitlist, workers, admins,
 │                   coupons/ (route.ts, batch/, [couponId]/ (route.ts, redemptions/, actions/[action]/)),
 │                   promotions/ (route.ts, settings/, [promotionId]/ (route.ts, actions/[action]/)),            # NEW v1.3.0
 │                   ranking/ (configs/ (route.ts, [version]/activate, [version]/shadow),
 │                             overrides/ (route.ts, [overrideId]/), simulate/),                                 # NEW v1.3.0
-│                   workers/[workerId]/ (… ranking/, ranking-flags/))                                           # NEW v1.3.0
+│                   workers/[workerId]/ (… ranking/, ranking-flags/, ranking-explain/))                         # ranking-explain NEW v1.3.1
 ├── components/ layout auth shared ui analytics bookings categories dashboard disputes map notifications
 │               payments reviews users verification waitlist workers
 │               settings/PricingSettings.tsx
 │               coupons/ CouponsSection.tsx CouponFormDialog.tsx CouponDetailView.tsx
 │               promotions/ PromotionsSection.tsx PromotionDetailView.tsx PromotionGuardrails.tsx    # NEW v1.3.0
 │               ranking/ RankingSection.tsx ConfigEditorDialog.tsx OverridesPanel.tsx SimulatePanel.tsx   # NEW v1.3.0
-│               workers/WorkerRankingPanel.tsx                                                         # NEW v1.3.0
+│               ranking/ RankingExplainView.tsx ExplainSearchForm.tsx ExplainSummary.tsx ExplainTerms.tsx
+│                        ExplainAdjustments.tsx ExplainPerformance.tsx explain-ui.ts                    # NEW v1.3.1
+│               workers/WorkerRankingPanel.tsx                                                         # NEW v1.3.0 (v1.3.1: "Why this rank?" button)
 ├── db/migrations/001 … 016_*.sql                                                     # no 017: coupons, promotions, ranking are owned by other services
 ├── hooks/  lib/  scripts/  types/  tests/
 │   hooks/useCoupons.ts  types/coupon.ts  tests/coupons.test.ts
-│   hooks/usePromotions.ts  hooks/useRanking.ts  types/promotion.ts  types/ranking.ts                # NEW v1.3.0
+│   hooks/usePromotions.ts  hooks/useRanking.ts  types/promotion.ts  types/ranking.ts                # NEW v1.3.0 (v1.3.1: useRankingExplain, RankingExplain types)
 │   tests/promotions-api.test.ts  tests/ranking-api.test.ts                                          # NEW v1.3.0
+│   tests/ranking-explain.test.ts                                                                    # NEW v1.3.1
 ├── lib/
 │   ├── auth/       config cookies crypto issue jwt mfa password rate-limit rbac redirect request session trusted-device uuid-guard
 │   ├── services/   booking.ts (+ couponSvc, promotionSvc) worker.ts (+ performance, rankingFlag) review.ts
-│   │               search.ts (+ rankingSvc)                                           # internal API clients
+│   │               search.ts (+ rankingSvc, incl. explain)                             # internal API clients
 │   ├── internal-client.ts cache.ts
 │   ├── db.ts redis.ts audit.ts rbac-guard.ts auth-fetch.ts swr-fetcher.ts cn.ts nav-config.ts
 │   ├── notification-service.ts notifications-api.ts notification-catalog.ts notification-constants.ts
@@ -241,12 +246,14 @@ tasklync-admin/
 │   ├── reviews-api.ts review-constants.ts verification-api.ts verification-constants.ts
 │   ├── coupons-api.ts coupon-constants.ts
 │   ├── promotions-api.ts promotion-constants.ts                                      # NEW v1.3.0
-│   ├── ranking-api.ts ranking-constants.ts                                           # NEW v1.3.0
+│   ├── ranking-api.ts ranking-constants.ts                                           # NEW v1.3.0 (v1.3.1: explainQuerySchema, mapExplain)
 │   └── workers-api.ts map-api.ts map-constants.ts map-geo.ts analytics-api.ts analytics-constants.ts parse-user-agent.ts
 └── scripts/ migrate.ts  seed-super-admin.ts  generate-broadcast-templates.ts
     (removed: setup-firebase.ts, encode-firebase-credentials.ps1, test-direct-broadcast.ts)
 (removed: lib/direct-broadcast-engine.ts, lib/firebase-admin.ts, service-account.example.json)
 ```
+
+**search-service files touched by v1.3.1** (separate repo, listed for reference): `src/services/ranking.service.ts` (refactor, same SQL output), new `src/services/ranking-explain.format.ts` and `src/services/ranking-explain.service.ts`, `src/controllers/ranking-admin.controller.ts` (new `explain` handler), `src/routes/internal.routes.ts` (new route), new `tests/ranking-explain.test.ts`.
 
 ---
 
@@ -277,7 +284,7 @@ Run with `npm run migrate` (tracks applied files in `admin_migrations`; on an ex
 | 015 | `admin_session_hardening` | `admin_trusted_devices`, unique `LOWER(email)` |
 | **016** | `round2_hardening` | `admin_audit_log.resource_id` → VARCHAR(100); pricing config split into customer fee and worker commission; `get_user_kpis()`; dashboard KPIs, revenue chart and revenue by city on **one date basis (completion time, Karachi)**; **canonical `get_needs_attention()`** (adds stuck `IN_PROGRESS` jobs); RLS on admin tables; outbox marked deprecated |
 
-**No 017.** The Coupons, Promotions and Ranking modules need no admin migration: there are no admin-owned tables for them. Coupon and promotion data are owned by booking-service, ranking policy by search-service, ranking facts and flags by worker-service. The only schema dependency is **booking-service migrations 013 to 015** (not to be confused with admin `013_live_map` and `014_reviews_admin` / `015_admin_session_hardening`, they are separate numbering schemes): 013 adds the coupon discount columns on `bookings`, 015 adds the discount funding columns (section 4.3). Both are read by the booking detail query.
+**No 017.** The Coupons, Promotions and Ranking modules (including the v1.3.1 explain page) need no admin migration: there are no admin-owned tables for them. Coupon and promotion data are owned by booking-service, ranking policy by search-service, ranking facts and flags by worker-service. The only schema dependency is **booking-service migrations 013 to 015** (not to be confused with admin `013_live_map` and `014_reviews_admin` / `015_admin_session_hardening`, they are separate numbering schemes): 013 adds the coupon discount columns on `bookings`, 015 adds the discount funding columns (section 4.3). Both are read by the booking detail query.
 
 **Run order matters:** every migration after 001 needs other services' tables first. `get_needs_attention()` was redefined in 002, 010 and 014; **016 holds the final definition**. If you ever re-run 002, 010 or 014, run section 5 of 016 again. The dashboard attention panel has **no** "offers waiting for approval" row because that would need an admin migration redefining `get_needs_attention()` (section 21, item 17).
 
@@ -399,7 +406,7 @@ Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/n
 | Role | Purpose |
 |---|---|
 | `SUPER_ADMIN` | Everything: ban, create categories, edit pricing, broadcast to all, resolve escalated disputes, manage admins, create / manage / approve coupons, **edit promotion guardrails, change ranking versions, overrides and simulations** |
-| `OPS` | Operations: verification, workers / users moderation (except ban), bookings, disputes, notifications, map, reviews, waitlist, create and manage coupons, **approve and suspend worker promotions, view ranking, flag workers** |
+| `OPS` | Operations: verification, workers / users moderation (except ban), bookings, disputes, notifications, map, reviews, waitlist, create and manage coupons, **approve and suspend worker promotions, view ranking (including the explain page), flag workers** |
 | `FINANCE` | Payments, analytics, dashboard, categories (read), coupons (view and second approver for high-budget / uncapped coupons), **promotions (view)** |
 | `SUPPORT` | Read-mostly: users, workers (read), bookings, disputes, reviews, coupons (view), **promotions (view)**, with warn / note / escalate |
 
@@ -435,22 +442,22 @@ Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/n
 | `promotions:approve` (approve, reject) | ✓ | ✓ | | |
 | `promotions:suspend` (pause, resume, end) | ✓ | ✓ | | |
 | `settings:promotions` (edit guardrails) | ✓ | | | |
-| `ranking:view` (Ranking console read, worker Ranking card) | ✓ | ✓ | | |
+| `ranking:view` (Ranking console read, worker Ranking card, **Ranking explain page and API**) | ✓ | ✓ | | |
 | `ranking:flag` (add / revoke worker ranking flags) | ✓ | ✓ | | |
 | `ranking:config` (create version, activate, shadow, overrides, simulate) | ✓ | | | |
 | `categories:create`, `:edit`, `services:edit` | ✓ | | | |
 | `settings:view`, `settings:edit`, `admin_users:manage` | ✓ | | | |
 
-`users:impersonate` no longer exists. Total: **58** permissions.
+`users:impersonate` no longer exists. Total: **58** permissions (unchanged in v1.3.1: the explain page reuses `ranking:view`).
 
 ### 6.3 Enforcement points
 
-1. **Middleware**: path prefix → permission (`/workers/verification` before `/workers`; **`/settings/ranking` and `/settings/admins` before `/settings`**; `/waitlist`, `/settings`, `/coupons` and `/promotions` are listed). The final order of the settings entries is `/settings/ranking` (`ranking:view`), `/settings/admins` (`admin_users:manage`), `/settings` (`settings:view`). Missing permission → redirect `/` for pages, 403 JSON for API.
+1. **Middleware**: path prefix → permission (`/workers/verification` before `/workers`; **`/settings/ranking` and `/settings/admins` before `/settings`**; `/waitlist`, `/settings`, `/coupons` and `/promotions` are listed). The final order of the settings entries is `/settings/ranking` (`ranking:view`), `/settings/admins` (`admin_users:manage`), `/settings` (`settings:view`). Missing permission → redirect `/` for pages, 403 JSON for API. **The explain page `/settings/ranking/explain/:workerId` is covered by the existing `/settings/ranking` prefix, so v1.3.1 needs no middleware change** (a test checks it).
 2. **Every API handler** starts with `requirePermission('x:y')`. The coupon action route maps each action to its permission (`ACTIONS` in `lib/coupons-api.ts`): `pause`, `resume`, `end`, `extend` → `coupons:manage`; `approve`, `reject` → `coupons:approve-high`. The promotion action route does the same in `lib/promotions-api.ts`: `approve`, `reject` → `promotions:approve`; `pause`, `resume`, `end` → `promotions:suspend`.
 3. **Inline rules**: escalated disputes, claim rules, broadcast-all, last Super Admin protection.
 4. **Four-eyes on coupons** is enforced in **booking-service**, not in the panel: the creator of a coupon can never approve their own coupon (403 `COUPON_FOUR_EYES`). FINANCE can approve but not create. Financial guardrails of coupons (percent cap, platform-take cap, high-budget threshold) are booking-service **environment settings**, not UI, so OPS and SUPPORT cannot change them.
 5. **Promotion guardrails are data, not environment.** The 10 limits for worker offers live in booking-service `promo_settings`, are edited from `Promotions → Guardrails` and only with `settings:promotions` (SUPER_ADMIN). booking-service validates them again and caches them for about 60 seconds. There is **no four-eyes on promotions** in v1.3.0: an offer outside the guardrails waits for one OPS or SUPER_ADMIN decision.
-6. **Ranking** policy is search-service data, editable only with `ranking:config` (SUPER_ADMIN). OPS can read it and flag individual workers (`ranking:flag`).
+6. **Ranking** policy is search-service data, editable only with `ranking:config` (SUPER_ADMIN). OPS can read it, open the read-only explain page and flag individual workers (`ranking:flag`).
 7. **UI**: `Sidebar` filters `NAV_ITEMS`; `usePermission()` hides buttons. Cosmetic only; the API decides.
 
 ### 6.4 Remaining RBAC notes
@@ -465,7 +472,7 @@ Source of truth: `lib/auth/rbac.ts`. Nav visibility is a separate list in `lib/n
 
 ## 7. API Reference
 
-Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin check. Errors `{ "error": "message", code? }`. Lists `{ data, page, pageSize, total, totalPages }`. A malformed `:id` on users / workers / bookings / disputes / reviews / payouts / campaigns / admins / **coupons / promotions / ranking overrides** returns `404` from middleware (`/api/admin/coupons/batch` and `/api/admin/promotions/settings` are whitelisted as static segments). Ranking config `:version` is an **integer**, not a UUID: it is not guarded in middleware, the route checks `/^\d+$/` and answers 404 otherwise.
+Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin check. Errors `{ "error": "message", code? }`. Lists `{ data, page, pageSize, total, totalPages }`. A malformed `:id` on users / workers / bookings / disputes / reviews / payouts / campaigns / admins / **coupons / promotions / ranking overrides** returns `404` from middleware (`/api/admin/coupons/batch` and `/api/admin/promotions/settings` are whitelisted as static segments). This includes `/api/admin/workers/:id/ranking-explain`, which is guarded through the `/api/admin/workers/` prefix. Ranking config `:version` is an **integer**, not a UUID: it is not guarded in middleware, the route checks `/^\d+$/` and answers 404 otherwise.
 
 ### 7.1 Auth (`/auth`)
 
@@ -497,6 +504,7 @@ Base path: `/api/admin`. Auth: httpOnly cookie. Unsafe methods pass the Origin c
 | GET | `/workers`, `/kpis`, `/filter-options`, `/export` | `workers:view` | export audited |
 | GET | `/workers/:id`, `/performance`, `/earnings`, `/jobs`, `/reviews`, `/availability`, `/catalog` | view | `earnings` computed from completed bookings |
 | GET | `/workers/:id/ranking` | `ranking:view` | **new in v1.3.0.** worker-service `GET /internal/admin/workers/:id/performance` mapped by `mapPerformance`: decayed performance facts, active and past flags, 30-day daily buckets, top-5 customer concentration (anonymised) |
+| GET | `/workers/:id/ranking-explain` | `ranking:view` | **new in v1.3.1.** Read only. search-service `GET /internal/ranking/explain`; query `q, categoryId, city, lat, lng, radius` (lat, lng and radius all or none, empty strings count as absent). Returns the term-by-term score, penalties, boost and gates, position and reason codes of one worker for one search context (section 8.15). No audit row (same rule as simulate) |
 | POST | `/workers/:id/ranking-flags` | `ranking:flag` | **new in v1.3.0.** `{ action: 'add', flagType, multiplier (0.2 to 1.25), reason (≥ 5), expiresAt? }` or `{ action: 'revoke', flagId (uuid), reason (≥ 3) }`. 201 on add, 200 on revoke. worker-service recomputes the multiplier and publishes `worker.stats_updated`, so the panel does **not** call `reindexWorker` here |
 | GET | `/workers/:id/documents` | `workers:verify` | **signed URLs from worker-service**, access logged (`worker.documents_viewed`) |
 | POST | `/workers/:id/actions/warn` | `workers:warn` | SQL |
@@ -592,7 +600,7 @@ All six route files are thin: validate, call booking-service `/internal/admin/co
 
 Booking detail extra fields are listed in 7.7.
 
-### 7.14 Promotions (new in v1.3.0)
+### 7.14 Promotions (v1.3.0)
 
 Five handlers in four route files. All call booking-service `/internal/admin/promotions/*` through `promotionSvc` (`lib/services/booking.ts`); mapping helpers, the action table and the guardrail schema are in `lib/promotions-api.ts`. These are **worker-funded** offers; platform campaigns are coupons (section 8.14).
 
@@ -604,9 +612,9 @@ Five handlers in four route files. All call booking-service `/internal/admin/pro
 | GET | `/promotions/settings` (`promotions/settings/route.ts`) | `promotions:view` | the 10 guardrails (camelCase to the browser, snake_case to booking-service) |
 | PUT | `/promotions/settings` (`promotions/settings/route.ts`) | `settings:promotions` | zod-validated with the same ranges as booking-service (section 8.14); auto-approve percent cannot exceed the max percent (400). Audit `promotion_settings.updated` with before and after values |
 
-### 7.15 Ranking (new in v1.3.0)
+### 7.15 Ranking (v1.3.0, explain added in v1.3.1)
 
-Eight handlers in six route files, plus the two worker ranking routes in 7.5. Policy routes call search-service `/internal/ranking/*` through `rankingSvc` (`lib/services/search.ts`); schemas and mappers are in `lib/ranking-api.ts`, term and parameter metadata in `lib/ranking-constants.ts`.
+Eight handlers in six route files, plus the **three** worker ranking routes in 7.5 (`ranking`, `ranking-flags`, `ranking-explain`). Policy routes call search-service `/internal/ranking/*` through `rankingSvc` (`lib/services/search.ts`); schemas and mappers are in `lib/ranking-api.ts`, term and parameter metadata in `lib/ranking-constants.ts`.
 
 | Method | Path | Permission | Notes |
 |---|---|---|---|
@@ -618,6 +626,8 @@ Eight handlers in six route files, plus the two worker ranking routes in 7.5. Po
 | POST | `/ranking/overrides` | `ranking:config` | upsert `{ scopeType: CATEGORY\|CITY, scopeValue, patch { weights?, params? }, note? }`, 201 `{ id }` |
 | DELETE | `/ranking/overrides/:overrideId` | `ranking:config` | UUID checked by middleware |
 | POST | `/ranking/simulate` | `ranking:config` | read-only comparison of the active version and a candidate over up to 20 queries, `top` 3 to 20 (default 10). 60 s timeout. **No audit row** (changes nothing) |
+
+**search-service side of explain (internal, not an admin route).** `GET /internal/ranking/explain` (header `X-Internal-Key`). Query: `worker_id` (UUID, required), `q`, `category_id`, `city`, `lat` + `lng` + `radius` (all or none; radius max `config.search.maxRadiusMeters`, 50,000 by default). Response `{ success: true, data: { worker, context, eligibility, terms[], weighted, multipliers, after_floors, boost, final_score, check_delta, rank, performance, reason_codes[] } }`. Errors: `400 VALIDATION_ERROR`, `404 WORKER_NOT_INDEXED`, `401` (key). The panel maps it with `mapExplain` (snake_case → camelCase, tolerant of missing blocks).
 
 ---
 
@@ -635,7 +645,7 @@ Status is derived: `deleted > banned > suspended > active > inactive`. Suspend a
 
 Derived status plus presence. Moderation (suspend, unsuspend, ban, force-offline) goes through worker-service, which writes the columns, clears worker, chat and contact caches and emits `worker.moderation_changed`; search drops the worker within seconds. Featured only for VERIFIED, non-banned workers. Badges `top_rated`, `background_verified` are rows in `worker_badges`.
 
-**Ranking card (v1.3.0).** The worker detail page mounts `WorkerRankingPanel` under the performance card. It returns nothing when the admin has no `ranking:view`. It shows the ranking multiplier, decayed acceptance, worker cancel plus no-show share, repeat customers, lifetime completed jobs, distinct customers, 4+ star share, average response, the customer concentration of the top 5 customers (anonymised), active and past flags and the last 14 days. Add and revoke flag buttons need `ranking:flag`. See section 8.15.
+**Ranking card (v1.3.0).** The worker detail page mounts `WorkerRankingPanel` under the performance card. It returns nothing when the admin has no `ranking:view`. It shows the ranking multiplier, decayed acceptance, worker cancel plus no-show share, repeat customers, lifetime completed jobs, distinct customers, 4+ star share, average response, the customer concentration of the top 5 customers (anonymised), active and past flags and the last 14 days. Add and revoke flag buttons need `ranking:flag`. **Since v1.3.1 the card header has a "Why this rank?" button that opens the explain page** (`/settings/ranking/explain/:workerId`). See section 8.15.
 
 ### 8.4 Worker verification
 
@@ -725,7 +735,7 @@ Platform-funded discount codes. The panel is a UI and BFF only: **rules, redempt
 
 **Broadcast.** The `coupon_gift` template sends a code, offer text and expiry to customers. Create the coupon first, then paste the code into the broadcast.
 
-### 8.14 Promotions (new in v1.3.0)
+### 8.14 Promotions (v1.3.0)
 
 **Worker-funded offers.** A worker creates an offer in the worker app; the discount comes off the **pre-fee subtotal**, fees and commission are recomputed, so the **worker earns less** (the customer pays less, the platform keeps its percentages on the smaller amount). The panel is **moderation plus guardrails** only. Rules, redemption and storage live in booking-service. Pages: `/promotions` (tabs **Offers** and **Guardrails**) and `/promotions/:promotionId`. Nav item "Promotions" (`Percent` icon) for all four roles.
 
@@ -766,9 +776,9 @@ Platform-funded discount codes. The panel is a UI and BFF only: **rules, redempt
 
 **Rollout switch.** `PROMOTIONS_ENABLED` (booking-service env, default `false`) controls whether offers apply at checkout; it does **not** hide existing rows from the panel.
 
-### 8.15 Ranking (new in v1.3.0)
+### 8.15 Ranking (v1.3.0, explain added in v1.3.1)
 
-**Where things live.** Ranking policy (versions, weights, parameters, overrides, shadow, simulate) is owned by **search-service**; the panel never writes ranking tables (D8, ADR-022). Performance facts (decayed counts, repeat rate, multiplier) and flags are owned by **worker-service**; the 45-day half-life decay is computed there (D6). Console: `Settings → Ranking` (`/settings/ranking`), nav item "Ranking" (`ListOrdered` icon) for SUPER_ADMIN and OPS. Tabs: **Versions**, **Category and city overrides**, **Simulate**.
+**Where things live.** Ranking policy (versions, weights, parameters, overrides, shadow, simulate, explain) is owned by **search-service**; the panel never writes ranking tables (D8, ADR-022). Performance facts (decayed counts, repeat rate, multiplier) and flags are owned by **worker-service**; the 45-day half-life decay is computed there (D6). Console: `Settings → Ranking` (`/settings/ranking`), nav item "Ranking" (`ListOrdered` icon) for SUPER_ADMIN and OPS. Tabs: **Versions**, **Category and city overrides**, **Simulate**. The explain page is reached from the worker detail page, not from the console tabs.
 
 **Ranking v2.** 13 weighted terms: `relevance, quality, distance, response, activity, availability, recency, reliability, cancellation, satisfaction, experience, trust, newcomer`. The old `boost` term is no longer weighted: it is an **additive, capped boost in points** (default cap 8 of 100, editorial plus promotion combined, applied only above quality, reliability and relevance gates). Terms that do not apply to a search (no text, no location) are dropped and the rest re-normalised, so the weights only need to sum to about 1 (the editor shows the sum and warns outside ±0.015).
 
@@ -786,7 +796,34 @@ Platform-funded discount codes. The panel is a UI and BFF only: **rules, redempt
 
 **Worker flags.** Flag types: Editorial boost, Quality penalty, Fraud suspect, Collusion suspect, Other (manual). A flag has a multiplier from **0.2 to 1.25**, a reason (≥ 5 chars, goes to the audit log) and an optional expiry. The worker's multiplier is the product of the active flags. A worker with a multiplier below 1 also loses the newcomer lift and is held to the strict-offer check (offers need admin approval, section 8.14). The system adds its own flags: more than 40 % of completed jobs from one customer with 10+ jobs triggers an automatic collusion flag (0.9), shown as "automatic". Adding or revoking a flag makes worker-service publish `worker.stats_updated` (reason `ranking_flag`), so search re-ranks the worker within seconds.
 
-**Launch gates the panel supports** (master plan section 8): G2 (backfill ran: the worker Ranking card shows "No performance row yet" until the hourly rollup or the backfill script creates it), G3 (the simulate page is where the shadow comparison is reviewed: no verified, high-quality worker may drop out of the top 20 without a reason).
+**Ranking explain, "Why this rank?" (new in v1.3.1).** A read-only page that shows why one worker ranks where they do, for one optional search context (text, category, city, location). Page `/settings/ranking/explain/:workerId`; permission `ranking:view` (SUPER_ADMIN, OPS). It is reached from the **Why this rank?** button on the worker Ranking card or by direct URL; there is no new nav item (the sidebar highlights "Ranking").
+
+```
+Browser page (client)  →  SWR GET /api/admin/workers/:id/ranking-explain?q=&categoryId=&city=&lat=&lng=&radius=
+Admin BFF route (requirePermission('ranking:view'), zod query, mapExplain)
+  → rankingSvc.explain()  GET {SEARCH_SERVICE_URL}/internal/ranking/explain?worker_id=…  (X-Internal-Key)
+search-service
+  → getEffectiveRankingConfig(category, city)  (active version + overrides)
+  → one SQL: the worker's document row + every term value, floor, boost part, gate value, final score
+  → one rank scan (top 100 of the same filters) + diversity pass → position
+  → assembleExplain() (pure) → { success, data }
+```
+
+Why a search-service endpoint: search-service had no explain route and `simulate` returns only `score` and `boosted`. The decayed performance columns, relevance, distance, floors and gate live in the search index, so the panel alone could only approximate. The explain SQL is built from the **same exported builders** as the real ranking SQL (`termSql`, `floorParts`, `boostParts`, `gateParts`, `activeTerms` in `ranking.service.ts`), so the numbers are exact.
+
+| Item | Status |
+|---|---|
+| Term values, weights, floors, boost, gate, final score | Exact (same SQL builders). The response carries `check_delta`, the gap between the final score and the sum recomputed from the parts; it should be about 0 |
+| Position | Exact for the same filters, **without a viewer** (no per-user block list) and ignoring the 60 s result cache. Scanned range: top 100 (the page then says "top 100 checked") |
+| Decayed performance stats | Exactly what the search index row holds (up to 5 minutes to a few seconds behind worker-service) |
+
+**What the page shows**, top to bottom: (1) a search form (text, category id, city, optional lat / lng / radius; empty = plain category browse; location must be all three or none); (2) a summary card with worker, search context, ranking version (notes for category/city override and fallback defaults), big **Final score** and **Position** (`#3 of 42 matching`), badges `Visible in search` / `Matches this search` / `Score order #5, shown #3`, a one-line formula `weighted 71.2 x1.00 = 71.2 + boost 7.0 = 78.2` and reason chips with plain sentences; (3) **Score terms** table: all 13 terms sorted by contribution, with value bar, weight share after dropping inapplicable terms, points bar and the reason a term is greyed out (no search text, no location, weight 0); (4) **Penalties and multipliers**: low rating floor, low reliability floor, ranking flags, total multiplier, score after penalties; (5) **Boost points**: featured, top rated, background verified, live offer, total vs cap, gate checklist (pass / fail with actual vs required), boost applied; (6) **Performance** card: acceptance, completion, cancel plus no-show, 4+ star share, jobs, repeat customers, flag multiplier, response, "computed at", and an empty state when no performance row exists.
+
+**Reason codes** (search-service returns codes, the panel holds the plain text in `components/ranking/explain-ui.ts`): `NOT_VISIBLE`, `NOT_MATCHING_FILTERS`, `FEATURED`, `TOP_RATED`, `BACKGROUND_VERIFIED`, `PROMO_BOOST`, `BOOST_GATED`, `BOOST_CAPPED`, `NEWCOMER`, `QUALITY_FLOOR`, `RELIABILITY_FLOOR`, `RANKING_FLAG_PENALTY`, `RANKING_FLAG_BOOST`, `BUSY_NOW`, `NO_PERFORMANCE_DATA`, `DIVERSITY_MOVED_UP`, `DIVERSITY_MOVED_DOWN`. Severity is `positive`, `negative` or `info`.
+
+**States.** Loading: two skeleton blocks. Error: the service message (for example "This worker is not in the search index…", 404 `WORKER_NOT_INDEXED`) plus Retry; 503 when `SEARCH_SERVICE_URL` is wrong. No permission: "You do not have access to ranking details." Not visible or not matching: numbers are still shown, position is `n/a` and the chips explain why. The page does not refetch on window focus; it runs again only when the search form is applied. Each Explain costs 2 queries (one row, one top-100 scan), admin only, not cached, so there is no extra load on public search.
+
+**Launch gates the panel supports** (master plan section 8): G2 (backfill ran: the worker Ranking card shows "No performance row yet" until the hourly rollup or the backfill script creates it), G3 (the simulate page is where the shadow comparison is reviewed: no verified, high-quality worker may drop out of the top 20 without a reason; **the explain page answers "why" for a single worker that moved**).
 
 ---
 
@@ -800,7 +837,7 @@ Platform-funded discount codes. The panel is a UI and BFF only: **rules, redempt
 | worker-service | **internal API** + shared columns | `/internal/admin/*` for verification and moderation; `/internal/cache/invalidate` after catalog and worker changes; **`/internal/admin/workers/:id/performance` and `/ranking-flags` (section 7.5)** |
 | booking-service | **internal API** | `/internal/admin/*` (section 7.7, 7.8), `/internal/admin/coupons/*` (section 7.13) **and `/internal/admin/promotions/*` (section 7.14)**. booking-service emits the events. Also reads the coupon columns (migration 013) and discount funding columns (migration 015) on `bookings` |
 | review-service | **internal API** | `PATCH /internal/reviews/:id/moderate` |
-| search-service | internal API | `POST /internal/reindex/:workerId` after SQL changes (feature, badge, contact, re-verification); **`/internal/ranking/*` (section 7.15)**. Internal body limit raised to 64 kb (B9) |
+| search-service | internal API | `POST /internal/reindex/:workerId` after SQL changes (feature, badge, contact, re-verification); **`/internal/ranking/*` (section 7.15), including the read-only `GET /internal/ranking/explain` since v1.3.1**. Internal body limit raised to 64 kb (B9) |
 | payment-service | HTTP | refunds, payout retry; reads its tables |
 | notification-service | gateway side door | broadcasts and tests, including the **`coupon_gift`** broadcast template |
 | chat-service | read | `messages` for the booking chat tab |
@@ -820,13 +857,14 @@ Platform-funded discount codes. The panel is a UI and BFF only: **rules, redempt
 | booking-service `PUT /internal/admin/promotions/settings` takes `admin_id`, `admin_email` + the 10 fields | `toServiceSettings` |
 | search-service `GET /internal/ranking/configs` returns an array of config rows (`version, weights, params, prior_mean, prior_weight, is_active, shadow_enabled, shadow_sample_pct, note, created_by, created_at, activated_by, activated_at`) | `lib/ranking-api.ts` (`mapConfig`) |
 | search-service `POST /internal/ranking/simulate` returns `{ active_version, summary: { queries, avg_overlap_at_n }, results: [{ query, active[], candidate[], overlap, moved[] }] }` | `components/ranking/SimulatePanel.tsx` |
+| search-service `GET /internal/ranking/explain` returns `{ success, data }` with `worker, context, eligibility, terms[], weighted, multipliers, after_floors, boost, final_score, check_delta, rank, performance, reason_codes[]` (snake_case); error codes `VALIDATION_ERROR` (400), `WORKER_NOT_INDEXED` (404). Query params are snake_case (`worker_id`, `category_id`) | `lib/services/search.ts` (`rankingSvc.explain`), `lib/ranking-api.ts` (`mapExplain`, `explainQuerySchema`) |
 | worker-service `GET /internal/admin/workers/:id/performance` returns `{ worker, stats, flags, daily, top_customers }` (snake_case) | `mapPerformance` |
 
-File 01 §18 of the implementation plan lists the booking promotion routes but not their response bodies, so the promotion wrappers are **tolerant** (they accept several field names). A mismatch is a one-line fix in `lib/promotions-api.ts` or `lib/ranking-api.ts`; the routes do not change.
+File 01 §18 of the implementation plan lists the booking promotion routes but not their response bodies, so the promotion wrappers are **tolerant** (they accept several field names). A mismatch is a one-line fix in `lib/promotions-api.ts` or `lib/ranking-api.ts`; the routes do not change. `mapExplain` is also tolerant: a minimal payload maps to empty terms, no gates, no rank and `performance.hasData = false` (tested).
 
 ### 9.3 Admin events
 
-The panel produces **no Kafka events** any more. `admin_event_outbox` is deprecated and unused. The owning service emits the events for every action listed above, including `promotion.*` (topic `promotion.events`, producer booking-service outbox) and `worker.stats_updated` (reasons `performance.rollup`, `ranking_flag`).
+The panel produces **no Kafka events** any more. `admin_event_outbox` is deprecated and unused. The owning service emits the events for every action listed above, including `promotion.*` (topic `promotion.events`, producer booking-service outbox) and `worker.stats_updated` (reasons `performance.rollup`, `ranking_flag`). The explain endpoint is read only and emits nothing.
 
 ### 9.4 What other teams must do
 
@@ -835,7 +873,7 @@ The panel produces **no Kafka events** any more. `admin_event_outbox` is depreca
 | booking | v3.1.0 deployed first; **migrations 013 to 015 deployed before this panel version**; `/internal/admin/coupons/*` and `/internal/admin/promotions/*` live with the response shapes of 9.2; reads `platform_pricing_config`; emits events for admin actions; enforces four-eyes and the coupon guardrails (env); Kafka topic `promotion.events` created before migration step (producer has `allowAutoTopicCreation: false`) |
 | worker | confirm the internal admin contract; consume `booking.reassigned` with `old_worker_id` / `new_worker_id`; keep `worker_badges` / `worker_verification_reviews` schema; **`/internal/admin/workers/:id/performance` and `/ranking-flags` live, hourly rollup running (`PERF_ROLLUP_CRON`)** |
 | review | confirm the moderate body; emit `review.moderated` |
-| search | confirm `/internal/reindex/:id`; **`/internal/ranking/*` live, `/internal` body limit raised to 64 kb (B9), port 3019** |
+| search | confirm `/internal/reindex/:id`; **`/internal/ranking/*` live, `/internal` body limit raised to 64 kb (B9), port 3019; v1.3.1: rebuild and restart with `GET /internal/ranking/explain` and the refactored `ranking.service.ts` (same SQL output; if an existing test asserts the exact old boost string, change it to match `LEAST(8.0000`), and add `GET /internal/ranking/explain` and error `WORKER_NOT_INDEXED` (404) to the search service doc** |
 | notification | dispute and admin templates; **deploy the regenerated broadcast template files (incl. `coupon_gift`)**; keep the gateway side door; consume `promotion.events` |
 | payment | COD `refund_kind = FEE_WAIVER` moves no money; confirm port (3017 vs 3005); **G1 fix: a discounted COD booking settles `worker_amount` exactly as the booking snapshot** |
 | all services | DB roles must bypass RLS |
@@ -849,22 +887,22 @@ The panel produces **no Kafka events** any more. `admin_event_outbox` is depreca
 | Transport / headers | HSTS (1 y), `X-Frame-Options: DENY`, `nosniff`, strict referrer, empty Permissions-Policy, `Cache-Control: no-store` on `/auth/*` and `/api/admin/*` |
 | CSRF | SameSite=Lax cookies plus Origin = Host check on every unsafe `/api/*` call |
 | Authn | Password + mandatory TOTP, trusted devices, lockout, per-IP and per-email limits, constant-time dummy hash |
-| Authz | Permission per route with Redis session; `mfa_setup` scope reaches nothing else; coupon approval is four-eyes (booking-service); promotion guardrails and ranking policy need `settings:promotions` / `ranking:config` (SUPER_ADMIN) |
+| Authz | Permission per route with Redis session; `mfa_setup` scope reaches nothing else; coupon approval is four-eyes (booking-service); promotion guardrails and ranking policy need `settings:promotions` / `ranking:config` (SUPER_ADMIN); the explain page and API only need `ranking:view` because they are read only and change nothing |
 | Sessions | Rotating refresh, theft detection, 3 sessions, deactivation / role change / MFA reset kill sessions at once |
 | Secrets at rest | TOTP AES-256-GCM, backup codes HMAC, passwords bcrypt, refresh and device secrets hashed |
 | Service-to-service | `X-Internal-Key` per target service (own variable, fallback `INTERNAL_API_KEY`), read at call time, never sent to the browser |
-| Input | UUID guard for ids in middleware; zod on auth, coupon, promotion and ranking routes; whitelists for sort columns, enums, tabs; all values bound as `$n`; ranking version path param must match `/^\d+$/` |
-| SQL | Parameterised; interpolated values are whitelisted constants only |
+| Input | UUID guard for ids in middleware (also covers `/api/admin/workers/:id/ranking-explain`); zod on auth, coupon, promotion and ranking routes (explain query: category id `^[A-Za-z0-9_-]{1,50}$`, `q` and `city` ≤ 100, lat -90..90, lng -180..180, radius 1..50,000, location all-or-none); whitelists for sort columns, enums, tabs; all values bound as `$n`; ranking version path param must match `/^\d+$/` |
+| SQL | Parameterised; interpolated values are whitelisted constants only (the explain SQL reuses the ranking builders, which interpolate only numeric config values and bind the search text, radius and worker id as `$n`) |
 | DB | TLS verified when `DATABASE_CA_CERT` is set; RLS on admin tables |
-| PII | Payout / refund destinations masked; coupon redemption phone numbers masked to the last 4; **KYC images only as 15-minute signed URLs and every access logged**; CSV formula-injection guard on finance exports; customer concentration on the worker Ranking card is anonymised (counts and shares only, no customer ids) |
-| Audit | Every mutation writes `admin_audit_log`; all exports audited; batch coupon codes are never written to the audit log; ranking and promotion changes are audited with reasons and before / after values where they exist |
+| PII | Payout / refund destinations masked; coupon redemption phone numbers masked to the last 4; **KYC images only as 15-minute signed URLs and every access logged**; CSV formula-injection guard on finance exports; customer concentration on the worker Ranking card is anonymised (counts and shares only, no customer ids); the explain response holds worker data only, no customer data |
+| Audit | Every mutation writes `admin_audit_log`; all exports audited; batch coupon codes are never written to the audit log; ranking and promotion changes are audited with reasons and before / after values where they exist; read-only ranking tools (simulate, explain) are not audited |
 | Removed | Impersonation endpoint (410), direct Firebase credentials, Supabase keys from `.env.example` |
 
 ### Known limits
 
 - `getClientIp` trusts `x-real-ip` / `x-forwarded-for`: only safe behind a proxy that overwrites them (per-account lockout does not depend on it).
 - Audit entries are written after the action. If the audit insert fails the action still stands and the full entry is printed to stderr (`[audit] FAILED …`) for recovery.
-- Rate limiting is applied to auth endpoints only, not to the data APIs.
+- Rate limiting is applied to auth endpoints only, not to the data APIs (the explain page runs 2 queries per request; it is admin only).
 - Banned users keep a valid access token for up to 15 minutes.
 - Free-text fields are stored as typed; the UI must render them as text.
 - Ranking activation has a single approver (one SUPER_ADMIN plus an audited note); promotions have no four-eyes.
@@ -896,13 +934,13 @@ The panel produces **no Kafka events** any more. `admin_event_outbox` is depreca
 | `BOOKING_SERVICE_URL`, `BOOKING_SERVICE_INTERNAL_KEY` | booking actions, **coupons and promotions** (`:3004`) |
 | `WORKER_SERVICE_URL`, `WORKER_SERVICE_INTERNAL_KEY` | verification, moderation, cache, **worker performance and ranking flags** (`:3003`) |
 | `REVIEW_SERVICE_URL`, `REVIEW_SERVICE_INTERNAL_KEY` | review moderation (`:3007`) |
-| `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_INTERNAL_KEY` | reindex **and the Ranking console** (**`:3019`**, was wrongly `:3008` before v1.3.0) |
+| `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_INTERNAL_KEY` | reindex **, the Ranking console and the ranking explain page** (**`:3019`**, was wrongly `:3008` before v1.3.0). The admin doc says 3019 while the search-service doc may still say 3008: use whichever search-service actually listens on (`PORT`) and make both docs agree |
 | `PAYMENT_SERVICE_URL`, `PAYMENT_SERVICE_INTERNAL_KEY` | refunds, payout retry (confirm port 3017 vs 3005) |
 | `API_GATEWAY_URL`, `GATEWAY_ADMIN_KEY` | broadcasts (gateway side door) |
 
-The coupon, promotion and ranking modules add **no new admin variable**. Coupon guardrails (for example `COUPON_HIGH_BUDGET_THRESHOLD_PKR`) are environment settings of booking-service, deliberately not editable from the UI; promotion guardrails are data in booking-service (`promo_settings`) edited from the panel by SUPER_ADMIN. The new variables of the other services (booking `PROMOTIONS_ENABLED`, `PROMOTION_SWEEP_MINUTES`; worker `PERF_HALF_LIFE_DAYS`, `PERF_WINDOW_DAYS`, `PERF_ROLLUP_CRON`, `PERF_STATS_PUBLISH_MAX`; search `RANKING_SHADOW_ENABLED`, `RANKING_DIVERSITY_WINDOW`) are documented in those services' docs.
+The coupon, promotion and ranking modules (including explain) add **no new admin variable**. Coupon guardrails (for example `COUPON_HIGH_BUDGET_THRESHOLD_PKR`) are environment settings of booking-service, deliberately not editable from the UI; promotion guardrails are data in booking-service (`promo_settings`) edited from the panel by SUPER_ADMIN. The new variables of the other services (booking `PROMOTIONS_ENABLED`, `PROMOTION_SWEEP_MINUTES`; worker `PERF_HALF_LIFE_DAYS`, `PERF_WINDOW_DAYS`, `PERF_ROLLUP_CRON`, `PERF_STATS_PUBLISH_MAX`; search `RANKING_SHADOW_ENABLED`, `RANKING_DIVERSITY_WINDOW`) are documented in those services' docs. The explain radius limit uses search-service `config.search.maxRadiusMeters`; the panel form and schema cap the radius at 50,000 m.
 
-> **A wrong `SEARCH_SERVICE_URL` is now visible.** Before v1.3.0 it only made `reindexWorker` fail silently (best effort). Now it also makes the whole Ranking console answer 503.
+> **A wrong `SEARCH_SERVICE_URL` is now visible.** Before v1.3.0 it only made `reindexWorker` fail silently (best effort). Now it also makes the whole Ranking console and the explain page answer 503.
 
 ### Behaviour
 
@@ -933,7 +971,7 @@ Never commit `.env`. A secret shorter than required fails on first use; keys are
 | `admin:totp_used:{adminId}:{code}` | 120 s | TOTP replay protection |
 | `admin:rl:*` | 10 min to 1 h | login, mfa, refresh, mfa-setup limiters |
 
-Keys the panel reads or deletes in other services' namespaces: `worker:location:{id}` (read, optional map overlay); `review:{id}`, `rating:summary:{workerId}` are now cleared by review-service; **`user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` are deleted on every user moderation action**; worker-side keys are cleared by worker-service's moderation and cache endpoints. The Coupons, Promotions and Ranking modules add no Redis keys (worker-service invalidates its own caches when a ranking flag changes; search-service caches the active ranking config for `RANKING_CONFIG_CACHE_SECONDS`, about 1 minute, in its own namespace).
+Keys the panel reads or deletes in other services' namespaces: `worker:location:{id}` (read, optional map overlay); `review:{id}`, `rating:summary:{workerId}` are now cleared by review-service; **`user:status:{id}`, `chat:acct:user:{id}`, `contact:user:{id}` are deleted on every user moderation action**; worker-side keys are cleared by worker-service's moderation and cache endpoints. The Coupons, Promotions and Ranking modules (including explain) add no Redis keys (worker-service invalidates its own caches when a ranking flag changes; search-service caches the active ranking config for `RANKING_CONFIG_CACHE_SECONDS`, about 1 minute, in its own namespace; explain bypasses the 60 s search result cache and caches nothing).
 
 The auth rate limiter **fails closed** (a Redis error returns 500).
 
@@ -956,11 +994,11 @@ The auth rate limiter **fails closed** (a Redis error returns 500).
 | Notifications | `notification.broadcast_launched`, `notification.test_dispatched` |
 | Coupons | `coupon.created`, `coupon.approved`, `coupon.rejected`, `coupon.paused`, `coupon.resumed`, `coupon.ended`, `coupon.extended`, `coupon.batch_generated` (resource type `coupon`, or `coupon_batch` for batches; the batch entry holds count, type and value only, never the codes) |
 | Promotions | `promotion.approved`, `promotion.rejected`, `promotion.paused`, `promotion.resumed`, `promotion.ended` (resource type `promotion`, reason in `notes`); `promotion_settings.updated` (resource type `platform_config`, resource id `promotions`, with before and after values) |
-| Ranking | `ranking.config_created` (resource type `ranking_config`, resource id = version, weights, params and note), `ranking.config_activated` (note required), `ranking.shadow_changed`, `ranking.override_set` and `ranking.override_removed` (resource type `ranking_override`), `ranking.worker_flagged` and `ranking.flag_revoked` (resource type `worker`, reason in `notes`). Simulations are **not** audited (read-only) |
+| Ranking | `ranking.config_created` (resource type `ranking_config`, resource id = version, weights, params and note), `ranking.config_activated` (note required), `ranking.shadow_changed`, `ranking.override_set` and `ranking.override_removed` (resource type `ranking_override`), `ranking.worker_flagged` and `ranking.flag_revoked` (resource type `worker`, reason in `notes`). Simulations and explain requests are **not** audited (read-only) |
 | Catalog | `category.*`, `service.*`, `pricing_config.updated` (with before and after values) |
 | Waitlist | `waitlist.status_updated`, `waitlist.exported` |
 
-**Not logged:** failed permission checks, plain reads of data pages, ranking simulations.
+**Not logged:** failed permission checks, plain reads of data pages, ranking simulations, ranking explain requests.
 
 ```sql
 -- Who did what to this record
@@ -994,23 +1032,23 @@ WHERE action LIKE 'ranking.%' AND created_at > now() - interval '7 days' ORDER B
 ## 14. Error Handling Standard
 
 - Responses `{ "error": "Human-readable message" }`; service errors add `code`.
-- Calls to other services use `ServiceError` (`lib/internal-client.ts`): the service's own 4xx (400, 403, 404, 409, 422) is passed through with its message; 5xx and unreachable become `502` / `503`. Coupon, promotion and ranking routes use `serviceErrorResponse`; zod failures return 400 `"<field>: <message>"` via `zodResponse`.
+- Calls to other services use `ServiceError` (`lib/internal-client.ts`): the service's own 4xx (400, 403, 404, 409, 422) is passed through with its message; 5xx and unreachable become `502` / `503`. Coupon, promotion and ranking routes (including explain) use `serviceErrorResponse`; zod failures return 400 `"<field>: <message>"` via `zodResponse`.
 - Domain error classes (`BookingActionError`, `DisputeActionError`, `ReviewActionError`, `VerificationError`, `PaymentActionError`, `NotificationActionError`) are mapped by their `*ErrorResponse` helpers.
 - Postgres: `23505` → 409; `23P01` → 409; `42P01` / `42703` → 503 "run migration X" or `available:false`; `23503` → not found.
 - Unknown: `console.error(tag, err)` + generic 500; no stack traces leak.
 
 | Status | Meaning |
 |---|---|
-| 400 | validation failed (including `A reason is required` on promotion reject / pause / end, and ranking weights with a missing or unknown term) |
+| 400 | validation failed (including `A reason is required` on promotion reject / pause / end, ranking weights with a missing or unknown term, and explain with only some of lat, lng, radius) |
 | 401 | no / expired token or destroyed session |
 | 403 | permission, MFA setup required, CSRF origin, escalated dispute, `COUPON_FOUR_EYES` (creator approving their own coupon) |
-| 404 | not found, or `:id` not a UUID, or unknown coupon / promotion action, or a ranking `:version` that is not a positive integer |
+| 404 | not found, or `:id` not a UUID, or unknown coupon / promotion action, or a ranking `:version` that is not a positive integer, or explain `WORKER_NOT_INDEXED` (worker not verified, banned or not indexed yet) |
 | 409 | conflict or state guard (for example a promotion approve after the worker already ended it, or resume of an offer the worker paused) |
 | 410 | removed endpoint (impersonation) |
 | 422 | business rule |
 | 423 | admin locked |
 | 429 | rate limit, duplicate broadcast guard |
-| 502 / 503 | another service failed / not configured, migration missing (a wrong `SEARCH_SERVICE_URL` makes every Ranking console call answer 503) |
+| 502 / 503 | another service failed / not configured, migration missing (a wrong `SEARCH_SERVICE_URL` makes every Ranking console and explain call answer 503) |
 
 ---
 
@@ -1018,10 +1056,10 @@ WHERE action LIKE 'ranking.%' AND created_at > now() - interval '7 days' ORDER B
 
 Design tokens in `globals.css` (page `#F7F8FA`, surface `#FFFFFF`, border `#E5E7EB`, accent `#1F6F5F`, Inter + JetBrains Mono). Primitives: `Button`, `Input`, `Card`, `Badge`, `StatusBadge`, `DataTable`, `ConfirmDialog`. Layout: 240 px sidebar (64 px collapsed), 56 px header.
 
-- Page pattern: `Section` (filters + tab state) → `KpiGrid` → `FilterBar` → `Table`. Detail pages: `Header`, `Summary`, parties, tabs, action panel. Coupons and Promotions follow the same pattern (`CouponsSection`, `CouponDetailView`, `PromotionsSection`, `PromotionDetailView`) without a KPI grid. The Ranking console (`RankingSection`) uses tabs (Versions, Overrides, Simulate) and dialogs instead of a table.
-- Data: `fetcher` throws `Error(body.error)`; mutations are plain `fetch` in a `*Actions` object (`couponActions`, `promotionActions`, `rankingActions`), then `mutate()`; 401 handled globally.
-- Poll intervals: 5 s map workers, 15 s map jobs, 30 s dashboard / details / lists (coupon and promotion list and detail included, and the pending-offers banner count), 60 s analytics / finance / ranking versions / worker Ranking card, 5 s while a campaign is `SENDING`.
-- Sidebar highlights only the most specific matching href, so `/settings/ranking` does not light up "Settings".
+- Page pattern: `Section` (filters + tab state) → `KpiGrid` → `FilterBar` → `Table`. Detail pages: `Header`, `Summary`, parties, tabs, action panel. Coupons and Promotions follow the same pattern (`CouponsSection`, `CouponDetailView`, `PromotionsSection`, `PromotionDetailView`) without a KPI grid. The Ranking console (`RankingSection`) uses tabs (Versions, Overrides, Simulate) and dialogs instead of a table. **The explain page (`RankingExplainView`) is a read-only detail page: search form → summary card → terms table → adjustments (penalties and boost) → performance card.** Its plain-language text (term help, not-applied reasons, gate labels, reason code sentences) and formatters (`pts`, `pct`, `mult`) live in `components/ranking/explain-ui.ts`; add a sentence there whenever search-service adds a reason code or term (a test checks that every term has help text).
+- Data: `fetcher` throws `Error(body.error)`; mutations are plain `fetch` in a `*Actions` object (`couponActions`, `promotionActions`, `rankingActions`), then `mutate()`; 401 handled globally. The explain hook `useRankingExplain(workerId, query)` is read-only SWR (no actions object) with `revalidateOnFocus: false` and `shouldRetryOnError: false`.
+- Poll intervals: 5 s map workers, 15 s map jobs, 30 s dashboard / details / lists (coupon and promotion list and detail included, and the pending-offers banner count), 60 s analytics / finance / ranking versions / worker Ranking card, 5 s while a campaign is `SENDING`. **The explain page does not poll.**
+- Sidebar highlights only the most specific matching href, so `/settings/ranking` does not light up "Settings" (and the explain page highlights "Ranking").
 - Use `bg-bg-page` and `text-accent` (the old `bg-[--bg-page]` / `text-[--accent]` variables were undefined).
 - COD wording: use **"Fee waiver %"** instead of "Refund %" in the booking cancel dialog.
 - `SendTestModal` must show "see History" when `pushDelivered` is `null`.
@@ -1050,13 +1088,29 @@ First login → password → forced MFA enrolment (save the 10 backup codes) →
 | `npm test` | Vitest |
 | `npx tsx scripts/generate-broadcast-templates.ts [outDir]` | push / SMS template files for notification-service (re-run after catalog changes such as `coupon_gift`) |
 
-Local notes: cookies are `Secure` only in production; Redis must be reachable (the limiter fails closed); to use booking (including coupons and promotions), worker (including ranking flags), search (Ranking console, port **3019**) and review actions locally run those services and set their URLs and keys, otherwise the actions answer 503 "not configured".
+Local notes: cookies are `Secure` only in production; Redis must be reachable (the limiter fails closed); to use booking (including coupons and promotions), worker (including ranking flags), search (Ranking console and explain page, port **3019**) and review actions locally run those services and set their URLs and keys, otherwise the actions answer 503 "not configured".
 
 ---
 
 ## 17. Testing
 
-`vitest` with `@` alias. Current tests: UUID id guard (incl. coupon ids and the `batch` static segment, promotion ids and the `settings` static segment, ranking override ids, ranking config versions not guarded), RBAC (impersonation gone, path order, waitlist and settings, coupon, promotion and ranking permissions, `/settings/ranking` checked before `/settings`), review moderation transitions, `safeNextPath`, `mapSignedDocuments` (never exposes raw URLs), **coupons** (`tests/coupons.test.ts`: `stateOf` for pending, scheduled, active, expired, exhausted; `couponCreateSchema` rejects percent above 50, fixed above 5,000, `endsAt` in the past and `endsAt` before `startsAt`), **promotions** (`tests/promotions-api.test.ts`: `stateOf` for pending, scheduled, active, paused by admin, paused by worker, expired, exhausted; action to permission map; reason required for reject, pause and end; guardrail schema accepts defaults, rejects out-of-range values, rejects auto-approve percent above the max percent; camelCase / snake_case round trip of the 10 settings) and **ranking** (`tests/ranking-api.test.ts`: weights schema accepts the 13 default terms and rejects a missing term, an unknown term such as `boost`, all-zero weights and a weight above 1; activation needs a note; version path param is a positive integer; override scope is CATEGORY or CITY; flag multiplier limited to 0.2 to 1.25 and revoke needs a uuid; `setPath` / `getPath`; every param default inside its own range; `mapPerformance` tolerates a worker without stats).
+`vitest` with `@` alias. Current tests: UUID id guard (incl. coupon ids and the `batch` static segment, promotion ids and the `settings` static segment, ranking override ids, ranking config versions not guarded, **and `/api/admin/workers/:id/ranking-explain`**), RBAC (impersonation gone, path order, waitlist and settings, coupon, promotion and ranking permissions, `/settings/ranking` checked before `/settings`, **the explain page path covered by `ranking:view`**), review moderation transitions, `safeNextPath`, `mapSignedDocuments` (never exposes raw URLs), **coupons** (`tests/coupons.test.ts`: `stateOf` for pending, scheduled, active, expired, exhausted; `couponCreateSchema` rejects percent above 50, fixed above 5,000, `endsAt` in the past and `endsAt` before `startsAt`), **promotions** (`tests/promotions-api.test.ts`: `stateOf` for pending, scheduled, active, paused by admin, paused by worker, expired, exhausted; action to permission map; reason required for reject, pause and end; guardrail schema accepts defaults, rejects out-of-range values, rejects auto-approve percent above the max percent; camelCase / snake_case round trip of the 10 settings), **ranking** (`tests/ranking-api.test.ts`: weights schema accepts the 13 default terms and rejects a missing term, an unknown term such as `boost`, all-zero weights and a weight above 1; activation needs a note; version path param is a positive integer; override scope is CATEGORY or CITY; flag multiplier limited to 0.2 to 1.25 and revoke needs a uuid; `setPath` / `getPath`; every param default inside its own range; `mapPerformance` tolerates a worker without stats) and **ranking explain (v1.3.1)**.
+
+**Ranking explain tests (v1.3.1):**
+
+- Admin panel, `tests/ranking-explain.test.ts` (vitest): `explainQuerySchema` treats empty strings as absent, needs lat, lng and radius together, rejects a bad category id and a radius above 50,000; the page path `/settings/ranking/explain/abc` maps to `ranking:view` (OPS yes, FINANCE and SUPPORT no); the API path is UUID guarded; `mapExplain` tolerates a minimal payload and maps terms, gates and rank; every term has help text in `TERM_HELP`; known reason codes have text in `REASON_TEXT`.
+- search-service, `tests/ranking-explain.test.ts` (jest): `activeTerms` drops relevance without text and distance without geo; `gateParts` has a relevance gate only with search text; `boostParts(cfg).cap` is 8 and the score SQL still contains `LEAST(8.0000`; `assembleExplain` contributions sum to the weighted points and `check_delta` is below 0.05; inapplicable terms carry `NO_SEARCH_TEXT` / `NO_LOCATION`; a failed gate removes the boost and adds `BOOST_GATED`; flag penalty and floors are reported (product of multipliers); diversity movement is reported; a worker without performance data gets `NO_PERFORMANCE_DATA`.
+- The existing `tests/ranking.service.test.ts` in search-service must stay green after the refactor (only the exact boost string may need updating to `LEAST(8.0000`).
+
+Run:
+
+```powershell
+# admin panel
+npm test
+# search-service
+cd services\search-service
+npm run typecheck ; npm run test:unit
+```
 
 Manual smoke checklist after every deploy:
 
@@ -1102,6 +1156,21 @@ Manual smoke checklist after every deploy:
 | 38 | Activate with a note, then activate the old version again | both audited, results revert within about a minute |
 | 39 | OPS adds a `QUALITY_PENALTY` 0.7 flag on a worker | multiplier x0.70 shown at once, worker drops after reindex |
 | 40 | Open a booking that used a worker offer | line says "funded by the worker", worker payout lower than "without the offer" |
+| 41 | Open a verified worker, click **Why this rank?** | page loads: summary, 3 sections and the performance card |
+| 42 | Explain with no text and no filters | `relevance` and `distance` greyed, weight shares sum to 100% |
+| 43 | Add text `ac repair` and category `ac_repair` | relevance row active, its share appears, scores change |
+| 44 | Add lat, lng and radius; then fill only lat | distance row active; only lat filled → form error, no request sent |
+| 45 | Compare position with `GET /api/v1/search/workers` for the same filters | position matches (call it without `X-User-Id`) |
+| 46 | Weighted total x multiplier + boost on the page | equals Final score (`check_delta` about 0 in the JSON) |
+| 47 | Explain a worker with a `QUALITY_PENALTY` 0.7 flag | flag multiplier x0.70, chip "Admin or system penalty", no newcomer points |
+| 48 | Explain a worker with a live automatic offer | live offer points > 0, chip "Offer boost" |
+| 49 | Same worker with quality below 70% | gate "Fail", chip "Boost blocked", boost applied 0 |
+| 50 | Explain a brand-new worker with no stats | chip "No performance data yet" and the card message |
+| 51 | Explain a paused or suspended worker | 404 message "not in the search index" or chip "Hidden from search" |
+| 52 | Explain where a category / city override exists | summary says "+ category/city override" |
+| 53 | Log in as FINANCE / SUPPORT, open the explain URL | redirected to `/`; API returns 403; no button on the worker page |
+| 54 | `GET /api/admin/workers/abc/ranking-explain` | 404 JSON (UUID guard) |
+| 55 | Wrong `SEARCH_SERVICE_URL` | 503 message on the explain page with Retry |
 
 ---
 
@@ -1113,8 +1182,9 @@ Target: Vercel or any Node host. Outbound access to Postgres, Redis, booking, wo
 □ booking-service v3.1.0 deployed first
 □ booking-service migrations 013 (coupons) and 014, 015 (promotions, discount funding) applied BEFORE this panel version (booking detail reads the new bookings columns)
 □ booking /internal/admin/promotions/*, worker /internal/admin/workers/:id/performance + /ranking-flags and search /internal/ranking/* live (master plan steps 2 to 4)
+□ search-service v1.3.1 built (npm run build) and restarted with GET /internal/ranking/explain BEFORE this panel version (the explain page answers 502/404 without it)
 □ Kafka topic promotion.events exists and notification-service consumer is up (launch gate G5)
-□ SEARCH_SERVICE_URL fixed to port 3019 on the host (B5)
+□ SEARCH_SERVICE_URL fixed to port 3019 on the host (B5); the search-service doc and this doc agree on the port
 □ npm run build and npm run lint pass
 □ Migrations 001 to 016 applied (npm run migrate); get_user_kpis() exists after 016. There is no admin migration 017
 □ ADMIN_JWT_SECRET (≥ 48 chars) and ADMIN_MFA_ENCRYPTION_KEY (32 bytes base64) set and backed up separately
@@ -1140,7 +1210,14 @@ Rollout: apply migrations (additive, safe before code) → deploy → tell ownin
 4. Smoke test (section 17, items 27 to 40).
 5. Then, from the panel: simulate v2, run it in shadow (1 to 5 %) for 3 to 7 days, activate it from the Ranking console (master plan step 7). Turn on `PROMOTIONS_ENABLED=true` in booking-service for a few verified workers, with **Active offers per worker** lowered to 1 in the Guardrails tab, then widen (step 8).
 
-**Rollback:** redeploy the previous panel build. The panel stores nothing for these modules, so no data change is needed. Ranking and promotion state live in their services and keep working. The previous booking detail still renders (it ignores the new columns).
+**Ranking explain (v1.3.1), two small deploys, in this order:**
+
+1. **search-service:** rebuild (`npm run build`) and restart. New route `GET /internal/ranking/explain` and a refactor of `ranking.service.ts` that does not change results. **No migration, no env change, no new topic.** Run `npm run typecheck` and `npm run test:unit` first.
+2. **Admin panel:** normal redeploy. **No migration, no env change, no new permission.** In dev, Next hot-reloads (restart only if routes added while the server runs are not picked up).
+3. Check once that `SEARCH_SERVICE_URL` and the key on the admin host reach search-service, and that the port in both docs matches what search-service really listens on (`PORT`).
+4. Smoke test (section 17, items 41 to 55).
+
+**Rollback:** redeploy the previous panel build. The panel stores nothing for these modules, so no data change is needed. Ranking and promotion state live in their services and keep working. The previous booking detail still renders (it ignores the new columns). For v1.3.1 the explain endpoint is read-only and the ranking refactor does not change results, so rolling back either service build is safe on its own; without the panel button the explain page is simply not reachable.
 
 | Secret rotated | Effect |
 |---|---|
@@ -1185,6 +1262,13 @@ Rollout: apply migrations (additive, safe before code) → deploy → tell ownin
 | Creating a version fails with a body-size error from search-service | search-service `/internal` body limit still 1 kb; it must be 64 kb (B9) |
 | Activated a bad ranking version | activate the previous version again (about 1 minute) or create an override with `boost.capPoints = 0` |
 | Worker Ranking card says "No performance row yet" | the hourly rollup (`PERF_ROLLUP_CRON`) has not run for this worker or the backfill script was not run (launch gate G2) |
+| "Why this rank?" shows "This worker is not in the search index…" (404 `WORKER_NOT_INDEXED`) | the worker is not verified, is banned / paused, or has not been indexed yet; run `POST search /internal/reindex/<id>` if the worker should be there |
+| Explain page answers 503 or a generic 502 | `SEARCH_SERVICE_URL` or key wrong on the admin host, or search-service was not rebuilt with `GET /internal/ranking/explain` (v1.3.1) |
+| Explain page error "lat, lng and radius must all be provided together" | fill all three location fields or clear all three; the form and zod both check it |
+| Explain position is `n/a` | the worker is hidden from search or does not match the typed filters (see the chips), so there is no position to compute |
+| Explain position differs from the app | explain ignores the viewer's block list and the 60 s result cache and only scans the top 100; compare with `GET /api/v1/search/workers` without `X-User-Id` |
+| `check_delta` in the explain JSON is not about 0 | the explain parts and the real score SQL have drifted (for example a term added in `ranking.service.ts` but not in `assembleExplain`); fix in search-service, the panel only displays what it receives |
+| Boost string test fails in search-service after the v1.3.1 refactor | the boost SQL is now `LEAST(cap, (a + b + c) + promo)`; update the asserted string to `LEAST(8.0000`, results are identical |
 | Offers page empty but workers created offers | `PROMOTIONS_ENABLED=false` does not hide existing rows; check the booking-service list route and the `promotions` table |
 | Promotion approve answers 409 | state changed meanwhile (worker ended it, or it already expired); refresh |
 | Promotion resume answers 409 | the offer was paused by the worker; only the worker can resume it (admin resume works for admin-paused offers) |
@@ -1254,6 +1338,8 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 
 **ADR-022: Ranking policy lives in search-service, performance facts in worker-service; the panel never writes ranking tables.** Accepted (v1.3.0, decisions D5 to D8). One writer per table: the panel calls `/internal/ranking/*` on search-service (the same pattern as `/internal/reindex`) and `/internal/admin/workers/:id/ranking-flags` on worker-service. Versions are immutable and created inactive; activation needs a note and is audited, and **rollback is activating the previous version**. Search reads promotions and performance stats read-only and mirrors them in its own index (D7); the 45-day half-life decay is computed once, in worker-service (D6), so there is no config drift. Weights are a strict object of all 13 terms; the old `boost` term is an additive, capped boost in points (D5). Simulation is read-only and not audited. Ranking activation has a single approver by design in this release (section 21, item 20).
 
+**ADR-023: Ranking explain is computed inside search-service from the same SQL builders as the real ranking; the panel only displays it.** Accepted (v1.3.1). Search-service had no explain route, `simulate` returns only `score` and `boosted`, and the decayed performance columns, relevance, distance, floors and gate live in the search index, so any explanation computed in the panel would be an approximation that could drift from real ranking. Instead `ranking.service.ts` exports its building blocks (`termSql`, `floorParts`, `boostParts`, `gateParts`, `activeTerms`; the refactor keeps the SQL output identical) and `ranking-explain.service.ts` selects the worker's index row with every term value, multiplier, boost part, gate value and the final score in one SQL, then finds the position with one top-100 scan of the same filters plus the diversity pass. `assembleExplain` (pure, unit tested) turns the row into the response and returns a `check_delta` sanity value. The panel follows ADR-022: one BFF route, `rankingSvc.explain`, no writes, no audit row, no new permission (`ranking:view`), no admin migration. Known approximations, stated on the page: position ignores a viewer's block list and the 60 s result cache, and only the top 100 are scanned.
+
 ---
 
 ## 21. Known Issues & Roadmap
@@ -1279,11 +1365,14 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 | 15 | Broken link in `app/(admin)/categories/page.tsx` | still links to `/categories/pricing`, which has no page. Point it to `/settings` |
 | 16 | Coupon high-budget hint is display only | `HIGH_BUDGET_HINT_PKR` (100,000) in `lib/coupon-constants.ts` can drift from booking-service's `COUPON_HIGH_BUDGET_THRESHOLD_PKR`; booking-service decides |
 | 17 | Dashboard attention panel has no "offers waiting for approval" row | needs an admin migration that redefines `get_needs_attention()` (and its current body); the Promotions page shows a banner instead. Optional follow-up |
-| 18 | No ranking explain screen | search-service has no explain route in the implemented plan |
+| 18 | ~~No ranking explain screen~~ | **Done in v1.3.1** (Ranking explain page at `/settings/ranking/explain/:workerId`, section 8.15) |
 | 19 | Promotion list, detail and settings response shapes are assumed | section 9.2; confirm with booking-service |
 | 20 | Ranking activation has no second approver | single SUPER_ADMIN plus an audited note; promotions have no four-eyes either |
 | 21 | Ranking parameters and weight defaults are mirrored in the panel | `lib/ranking-constants.ts` copies `RANKING_TERMS` and `DEFAULT_PARAMS` from search-service (it clamps everything again); keep them in sync when search-service adds a term or parameter |
 | 22 | Promotion guardrail ranges are mirrored in the panel | `PROMOTION_SETTING_FIELDS` copies `adminPromoSettingsSchema` from booking-service; booking-service is authoritative |
+| 23 | Explain plain-language text is mirrored in the panel | `components/ranking/explain-ui.ts` holds the term help, not-applied reasons, gate labels and reason code sentences; when search-service adds a term or reason code, add its text here (the page falls back to the raw code) |
+| 24 | Explain position is approximate | no viewer block list, no 60 s result cache, top 100 scanned only (stated on the page); the score itself is exact |
+| 25 | Search port mismatch between docs | admin doc says 3019, the search-service doc may still say 3008; make both docs agree with the real `PORT` |
 
 ### Roadmap
 
@@ -1297,11 +1386,32 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 | Move CNIC number saving and re-verification to worker-service endpoints | removes the last worker writes |
 | Settings page: more platform configuration | |
 | Dashboard row for offers waiting for approval | item 17 |
-| Ranking explain page, second approver for ranking activation | items 18 and 20 |
+| Second approver for ranking activation | item 20 (the explain page, item 18, shipped in v1.3.1) |
 
 ---
 
 ## 22. Changelog
+
+### v1.3.1: Ranking explain, "Why this rank?" (November 2026)
+
+**Added**
+- **Ranking explain page** `/settings/ranking/explain/:workerId` (read only, `ranking:view`): search form (text, category, city, optional location), summary card (final score, position, ranking version, reason chips), score terms table (value, weight share, points, why a term is not used), penalties and multipliers, boost points with gate checklist, and a performance card. No new nav item.
+- **"Why this rank?" button** on the worker detail Ranking card (`WorkerRankingPanel`), shown only to admins with `ranking:view` (the card already hides itself without it).
+- 1 route handler `GET /api/admin/workers/:id/ranking-explain` (146 → **147**). No new permission (still 58), no migration, no env variable.
+- search-service `GET /internal/ranking/explain` (query `worker_id`, `q`, `category_id`, `city`, `lat`, `lng`, `radius`), new error `WORKER_NOT_INDEXED` (404). Numbers are **exact**: the explain SQL is built from the same functions as the real ranking SQL, and the response carries a `check_delta` sanity value.
+- New admin files: `app/api/admin/workers/[workerId]/ranking-explain/route.ts`, `app/(admin)/settings/ranking/explain/[workerId]/page.tsx`, `components/ranking/{RankingExplainView,ExplainSearchForm,ExplainSummary,ExplainTerms,ExplainAdjustments,ExplainPerformance}.tsx`, `components/ranking/explain-ui.ts`, `tests/ranking-explain.test.ts`. Edited: `lib/services/search.ts` (`rankingSvc.explain`), `types/ranking.ts` (`RankingExplain` and related types), `lib/ranking-api.ts` (`explainQuerySchema`, `mapExplain`), `hooks/useRanking.ts` (`ExplainQuery`, `useRankingExplain`), `components/workers/WorkerRankingPanel.tsx` (button).
+- New search-service files: `src/services/ranking-explain.format.ts` (pure `assembleExplain`), `src/services/ranking-explain.service.ts` (`explainWorker`), `tests/ranking-explain.test.ts`. Edited: `src/controllers/ranking-admin.controller.ts` (`explain` handler and `explainQuerySchema`), `src/routes/internal.routes.ts`.
+- 17 explain reason codes with plain-language text; smoke checks 41 to 55; admin and search-service unit tests (section 17).
+- ADR-023.
+
+**Changed**
+- search-service `ranking.service.ts` refactor: `termSql` is exported, new exports `floorParts`, `boostParts`, `gateParts`, `activeTerms`; `floorsSql`, `boostSql`, `gateSql` and `buildScoreSql` use them. Semantics and results are identical. One string differs: the boost expression is now `LEAST(cap, (a + b + c) + promo)` (extra parentheses); an existing test that asserts the exact old string must be changed to match `LEAST(8.0000`.
+- Deploy order: search-service rebuild and restart first, then the panel. No migration, no env change.
+- Section 21 item 18 ("No ranking explain screen") is closed; roadmap row updated.
+- `package.json` version bumped to 1.3.1.
+
+**Documentation drift noted**
+- The admin doc says search-service runs on port **3019**, the search-service doc may still say **3008**; use the real `PORT` and make both docs agree (open item 25).
 
 ### v1.3.0: Promotions and Ranking (November 2026)
 

@@ -54,3 +54,48 @@ export interface WorkerRanking {
   }[]
   topCustomers: { completedCount: number; lastCompletedAt: string; share: number }[]
 }
+
+export interface ExplainTerm {
+  term: string
+  applies: boolean
+  notAppliedReason: 'NO_SEARCH_TEXT' | 'NO_LOCATION' | 'WEIGHT_ZERO' | null
+  value: number | null
+  weight: number
+  weightShare: number
+  points: number
+}
+export interface ExplainGate { key: 'quality' | 'reliability' | 'relevance'; value: number | null; min: number; pass: boolean }
+export interface ExplainReason { code: string; severity: 'positive' | 'negative' | 'info'; detail: number | string | null }
+
+export interface RankingExplain {
+  worker: {
+    id: string; name: string | null; businessName: string | null; city: string | null; providerType: string
+    avgRating: number; totalReviews: number; totalBookings: number; isFeatured: boolean; badges: string[]
+    isOnJob: boolean; responseTimeMins: number; lastSeenAt: string | null; indexedAt: string | null
+  }
+  context: {
+    q: string | null; categoryId: string | null; city: string | null; hasLocation: boolean; radius: number | null
+    rankingVersion: number; overridesApplied: boolean; fallbackConfig: boolean
+  }
+  eligibility: { visible: boolean; matchesFilters: boolean }
+  terms: ExplainTerm[]
+  weighted: { points: number; fallbackUsed: boolean }
+  multipliers: { quality: number; reliability: number; flag: number; product: number }
+  afterFloors: number
+  boost: {
+    featured: number; topRated: number; backgroundVerified: number
+    promotion: { points: number; bestPct: number; until: string | null }
+    rawTotal: number; cap: number; cappedTotal: number; gates: ExplainGate[]; gatePass: boolean; applied: number
+  }
+  finalScore: number
+  checkDelta: number
+  rank: { scoreOrder: number | null; afterDiversity: number | null; scanned: number; totalMatching: number; moved: boolean } | null
+  performance: {
+    hasData: boolean; updatedAt: string | null
+    acceptedD: number; rejectedD: number; expiredD: number; completedD: number; workerCancelD: number; noShowD: number
+    ratingNd: number; highNd: number
+    acceptanceRate: number | null; completionRate: number | null; cancelNoShowRate: number | null; highRatingShare: number | null
+    jobsDone: number; repeatRate: number; rankingMultiplier: number
+  }
+  reasonCodes: ExplainReason[]
+}

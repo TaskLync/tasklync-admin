@@ -1,5 +1,4 @@
-﻿admin panel folder tree
-app
+﻿app
 components
 db
 docs
@@ -42,6 +41,7 @@ app\(admin)\disputes
 app\(admin)\map
 app\(admin)\notifications
 app\(admin)\payments
+app\(admin)\promotions
 app\(admin)\reviews
 app\(admin)\settings
 app\(admin)\users
@@ -67,12 +67,17 @@ app\(admin)\notifications\[campaignId]
 app\(admin)\notifications\page.tsx
 app\(admin)\notifications\[campaignId]\page.tsx
 app\(admin)\payments\page.tsx
+app\(admin)\promotions\[promotionId]
+app\(admin)\promotions\page.tsx
+app\(admin)\promotions\[promotionId]\page.tsx
 app\(admin)\reviews\[reviewId]
 app\(admin)\reviews\page.tsx
 app\(admin)\reviews\[reviewId]\page.tsx
 app\(admin)\settings\admins
+app\(admin)\settings\ranking
 app\(admin)\settings\page.tsx
 app\(admin)\settings\admins\page.tsx
+app\(admin)\settings\ranking\page.tsx
 app\(admin)\users\[userId]
 app\(admin)\users\page.tsx
 app\(admin)\users\[userId]\page.tsx
@@ -97,6 +102,8 @@ app\api\admin\map
 app\api\admin\notifications
 app\api\admin\payments
 app\api\admin\pricing-config
+app\api\admin\promotions
+app\api\admin\ranking
 app\api\admin\reviews
 app\api\admin\users
 app\api\admin\waitlist
@@ -251,6 +258,27 @@ app\api\admin\payments\reports\route.ts
 app\api\admin\payments\revenue\route.ts
 app\api\admin\payments\transactions\route.ts
 app\api\admin\pricing-config\route.ts
+app\api\admin\promotions\settings
+app\api\admin\promotions\[promotionId]
+app\api\admin\promotions\route.ts
+app\api\admin\promotions\settings\route.ts
+app\api\admin\promotions\[promotionId]\actions
+app\api\admin\promotions\[promotionId]\route.ts
+app\api\admin\promotions\[promotionId]\actions\[action]
+app\api\admin\promotions\[promotionId]\actions\[action]\route.ts
+app\api\admin\ranking\configs
+app\api\admin\ranking\overrides
+app\api\admin\ranking\simulate
+app\api\admin\ranking\configs\[version]
+app\api\admin\ranking\configs\route.ts
+app\api\admin\ranking\configs\[version]\activate
+app\api\admin\ranking\configs\[version]\shadow
+app\api\admin\ranking\configs\[version]\activate\route.ts
+app\api\admin\ranking\configs\[version]\shadow\route.ts
+app\api\admin\ranking\overrides\[overrideId]
+app\api\admin\ranking\overrides\route.ts
+app\api\admin\ranking\overrides\[overrideId]\route.ts
+app\api\admin\ranking\simulate\route.ts
 app\api\admin\reviews\audit
 app\api\admin\reviews\counts
 app\api\admin\reviews\[reviewId]
@@ -326,6 +354,8 @@ app\api\admin\workers\[workerId]\documents
 app\api\admin\workers\[workerId]\earnings
 app\api\admin\workers\[workerId]\jobs
 app\api\admin\workers\[workerId]\performance
+app\api\admin\workers\[workerId]\ranking
+app\api\admin\workers\[workerId]\ranking-flags
 app\api\admin\workers\[workerId]\reviews
 app\api\admin\workers\[workerId]\verification
 app\api\admin\workers\[workerId]\route.ts
@@ -359,6 +389,8 @@ app\api\admin\workers\[workerId]\documents\route.ts
 app\api\admin\workers\[workerId]\earnings\route.ts
 app\api\admin\workers\[workerId]\jobs\route.ts
 app\api\admin\workers\[workerId]\performance\route.ts
+app\api\admin\workers\[workerId]\ranking\route.ts
+app\api\admin\workers\[workerId]\ranking-flags\route.ts
 app\api\admin\workers\[workerId]\reviews\route.ts
 app\api\admin\workers\[workerId]\verification\cnic
 app\api\admin\workers\[workerId]\verification\view
@@ -383,6 +415,8 @@ components\layout
 components\map
 components\notifications
 components\payments
+components\promotions
+components\ranking
 components\reviews
 components\settings
 components\shared
@@ -480,6 +514,13 @@ components\payments\RefundDialog.tsx
 components\payments\RefundsTab.tsx
 components\payments\ReportsTab.tsx
 components\payments\TransactionsTab.tsx
+components\promotions\PromotionDetailView.tsx
+components\promotions\PromotionGuardrails.tsx
+components\promotions\PromotionsSection.tsx
+components\ranking\ConfigEditorDialog.tsx
+components\ranking\OverridesPanel.tsx
+components\ranking\RankingSection.tsx
+components\ranking\SimulatePanel.tsx
 components\reviews\RatingAuditTab.tsx
 components\reviews\review-ui.tsx
 components\reviews\ReviewActivity.tsx
@@ -543,6 +584,7 @@ components\workers\WorkerJobHistory.tsx
 components\workers\WorkerKpiGrid.tsx
 components\workers\WorkerPerformance.tsx
 components\workers\WorkerProfileHeader.tsx
+components\workers\WorkerRankingPanel.tsx
 components\workers\WorkerReviewHistory.tsx
 components\workers\WorkerSkillsOfferings.tsx
 components\workers\WorkersTableSection.tsx
@@ -652,6 +694,8 @@ hooks\useMap.ts
 hooks\useNotifications.ts
 hooks\usePayments.ts
 hooks\usePermission.ts
+hooks\usePromotions.ts
+hooks\useRanking.ts
 hooks\useReviews.ts
 hooks\useUsers.ts
 hooks\useVerification.ts
@@ -686,6 +730,10 @@ lib\parse-user-agent.ts
 lib\payment-constants.ts
 lib\payment-service.ts
 lib\payments-api.ts
+lib\promotion-constants.ts
+lib\promotions-api.ts
+lib\ranking-api.ts
+lib\ranking-constants.ts
 lib\rbac-guard.ts
 lib\redis.ts
 lib\review-constants.ts
@@ -729,6 +777,8 @@ types\dispute.ts
 types\map.ts
 types\notification.ts
 types\payment.ts
+types\promotion.ts
+types\ranking.ts
 types\review.ts
 types\user.ts
 types\verification.ts

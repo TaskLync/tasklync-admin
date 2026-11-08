@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { toast } from 'sonner'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -63,7 +64,15 @@ export default function WorkerRankingPanel({ workerId }: { workerId: string }) {
 
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">Ranking</h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Ranking</h2>
+        <Link
+          href={`/settings/ranking/explain/${workerId}`}
+          className="inline-flex h-8 items-center rounded-md border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+        >
+          Why this rank?
+        </Link>
+      </div>
 
       {isLoading ? (
         <div className="h-24 animate-pulse rounded-md bg-gray-100" />

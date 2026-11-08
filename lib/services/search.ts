@@ -33,4 +33,8 @@ export const rankingSvc = {
   removeOverride: (id: string) => callService(target(), 'DELETE', `/internal/ranking/overrides/${id}`),
   simulate: (body: object) =>
     callService(target(), 'POST', '/internal/ranking/simulate', { body, timeoutMs: 60_000 }),
+  /** Read only: why one worker ranks where they do. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  explain: (query: Record<string, string | number | undefined>) =>
+    callService<Record<string, any>>(target(), 'GET', '/internal/ranking/explain', { query, timeoutMs: 30_000 }),
 }

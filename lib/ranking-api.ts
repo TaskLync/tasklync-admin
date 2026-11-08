@@ -1,7 +1,7 @@
-// lib/ranking-api.ts (server only)
+﻿// lib/ranking-api.ts (server only)
 import { z } from 'zod'
 import { FLAG_TYPES, RANKING_TERMS } from '@/lib/ranking-constants'
-import type { RankingConfig, RankingOverride, WorkerRanking } from '@/types/ranking'
+import type { RankingConfig, RankingExplain, RankingOverride, WorkerRanking } from '@/types/ranking'
 
 const termShape = Object.fromEntries(RANKING_TERMS.map((t) => [t, z.number().min(0).max(1)])) as Record<string, z.ZodNumber>
 
@@ -134,5 +134,86 @@ export function mapPerformance(d: any): WorkerRanking {
     topCustomers: (d.top_customers ?? []).map((x: any) => ({
       completedCount: num(x.completed_count), lastCompletedAt: x.last_completed_at, share: num(x.share),
     })),
+  }
+}
+
+// ---------- explain ----------
+const emptyToUndef = (v: unknown) => (v === '' ? undefined : v)
+const optNum = <T extends z.ZodType>(s: T) => z.preprocess(emptyToUndef, s.optional())
+
+export const explainQuerySchema = z
+  .object({
+    q: z.preprocess(emptyToUndef, z.string().trim().min(1).max(100).optional()),
+    categoryId: z.preprocess(emptyToUndef, z.string().trim().regex(/^[A-Za-z0-9_-]{1,50}$/).optional()),
+    city: z.preprocess(emptyToUndef, z.string().trim().min(1).max(100).optional()),
+    lat: optNum(z.coerce.number().finite().min(-90).max(90)),
+    lng: optNum(z.coerce.number().finite().min(-180).max(180)),
+    radius: optNum(z.coerce.number().finite().positive().max(50000)),
+  })
+  .superRefine((d, ctx) => {
+    const n = [d.lat, d.lng, d.radius].filter((v) => v !== undefined).length
+    if (n > 0 && n < 3) ctx.addIssue({ code: 'custom', message: 'lat, lng and radius must all be provided together' })
+  })
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function mapExplain(d: any): RankingExplain {
+  const w = d?.worker ?? {}
+  const c = d?.context ?? {}
+  const b = d?.boost ?? {}
+  const p = d?.performance ?? {}
+  const m = d?.multipliers ?? {}
+  const rk = d?.rank
+  return {
+    worker: {
+      id: w.worker_id, name: w.name ?? null, businessName: w.business_name ?? null, city: w.city ?? null,
+      providerType: w.provider_type ?? 'INDIVIDUAL', avgRating: num(w.avg_rating), totalReviews: num(w.total_reviews),
+      totalBookings: num(w.total_bookings), isFeatured: Boolean(w.is_featured), badges: w.badges ?? [],
+      isOnJob: Boolean(w.is_on_job), responseTimeMins: num(w.response_time_mins), lastSeenAt: w.last_seen_at ?? null,
+      indexedAt: w.indexed_at ?? null,
+    },
+    context: {
+      q: c.q ?? null, categoryId: c.category_id ?? null, city: c.city ?? null, hasLocation: Boolean(c.has_location),
+      radius: numOrNull(c.radius), rankingVersion: num(c.ranking_version), overridesApplied: Boolean(c.overrides_applied),
+      fallbackConfig: Boolean(c.fallback_config),
+    },
+    eligibility: { visible: Boolean(d?.eligibility?.visible), matchesFilters: Boolean(d?.eligibility?.matches_filters) },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    terms: (d?.terms ?? []).map((t: any) => ({
+      term: t.term, applies: Boolean(t.applies), notAppliedReason: t.not_applied_reason ?? null,
+      value: numOrNull(t.value), weight: num(t.weight), weightShare: num(t.weight_share), points: num(t.points),
+    })),
+    weighted: { points: num(d?.weighted?.points), fallbackUsed: Boolean(d?.weighted?.fallback_used) },
+    multipliers: {
+      quality: m.quality === undefined ? 1 : num(m.quality), reliability: m.reliability === undefined ? 1 : num(m.reliability),
+      flag: m.flag === undefined ? 1 : num(m.flag), product: m.product === undefined ? 1 : num(m.product),
+    },
+    afterFloors: num(d?.after_floors),
+    boost: {
+      featured: num(b.featured), topRated: num(b.top_rated), backgroundVerified: num(b.background_verified),
+      promotion: { points: num(b.promotion?.points), bestPct: num(b.promotion?.best_pct), until: b.promotion?.until ?? null },
+      rawTotal: num(b.raw_total), cap: num(b.cap), cappedTotal: num(b.capped_total),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      gates: (b.gates ?? []).map((g: any) => ({ key: g.key, value: numOrNull(g.value), min: num(g.min), pass: Boolean(g.pass) })),
+      gatePass: Boolean(b.gate_pass), applied: num(b.applied),
+    },
+    finalScore: num(d?.final_score),
+    checkDelta: num(d?.check_delta),
+    rank: rk
+      ? {
+          scoreOrder: numOrNull(rk.score_order), afterDiversity: numOrNull(rk.after_diversity),
+          scanned: num(rk.scanned), totalMatching: num(rk.total_matching), moved: Boolean(rk.moved),
+        }
+      : null,
+    performance: {
+      hasData: Boolean(p.has_data), updatedAt: p.updated_at ?? null,
+      acceptedD: num(p.accepted_d), rejectedD: num(p.rejected_d), expiredD: num(p.expired_d), completedD: num(p.completed_d),
+      workerCancelD: num(p.worker_cancel_d), noShowD: num(p.no_show_d), ratingNd: num(p.rating_n_d), highNd: num(p.high_n_d),
+      acceptanceRate: numOrNull(p.acceptance_rate), completionRate: numOrNull(p.completion_rate),
+      cancelNoShowRate: numOrNull(p.cancel_no_show_rate), highRatingShare: numOrNull(p.high_rating_share),
+      jobsDone: num(p.jobs_done), repeatRate: num(p.repeat_rate),
+      rankingMultiplier: p.ranking_multiplier === undefined ? 1 : num(p.ranking_multiplier),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    reasonCodes: (d?.reason_codes ?? []).map((r: any) => ({ code: r.code, severity: r.severity, detail: r.detail ?? null })),
   }
 }

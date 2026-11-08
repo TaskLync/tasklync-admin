@@ -1,7 +1,7 @@
 import useSWR from 'swr'
 import { fetcher } from '@/lib/swr-fetcher'
 import { usePermission } from '@/hooks/usePermission'
-import type { RankingConfig, RankingOverride, SimResult, WorkerRanking } from '@/types/ranking'
+import type { RankingConfig, RankingExplain, RankingOverride, SimResult, WorkerRanking } from '@/types/ranking'
 
 export function useRankingConfigs() {
   const { data, error, isLoading, mutate } = useSWR<{ data: RankingConfig[] }>('/api/admin/ranking/configs', fetcher, {
@@ -21,6 +21,20 @@ export function useWorkerRanking(workerId: string) {
     allowed && workerId ? `/api/admin/workers/${workerId}/ranking` : null, fetcher, { refreshInterval: 60_000 }
   )
   return { ranking: data, allowed, error, isLoading, mutate }
+}
+
+export interface ExplainQuery { q?: string; categoryId?: string; city?: string; lat?: string; lng?: string; radius?: string }
+
+/** Read only explanation of one worker's rank for one search context. Runs again only when the query changes. */
+export function useRankingExplain(workerId: string, query: ExplainQuery) {
+  const allowed = usePermission('ranking:view')
+  const sp = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) if (v && v.trim() !== '') sp.set(k, v.trim())
+  const key = allowed && workerId ? `/api/admin/workers/${workerId}/ranking-explain?${sp.toString()}` : null
+  const { data, error, isLoading, isValidating, mutate } = useSWR<{ data: RankingExplain }>(key, fetcher, {
+    revalidateOnFocus: false, shouldRetryOnError: false,
+  })
+  return { explain: data?.data, allowed, error: error as Error | undefined, isLoading, isValidating, mutate }
 }
 
 async function call(method: 'POST' | 'DELETE', url: string, body?: object) {
