@@ -33,6 +33,7 @@ app\auth
 app\favicon.ico
 app\globals.css
 app\layout.tsx
+app\not-found.tsx
 app\(admin)\analytics
 app\(admin)\bookings
 app\(admin)\categories
@@ -77,7 +78,10 @@ app\(admin)\settings\admins
 app\(admin)\settings\ranking
 app\(admin)\settings\page.tsx
 app\(admin)\settings\admins\page.tsx
+app\(admin)\settings\ranking\explain
 app\(admin)\settings\ranking\page.tsx
+app\(admin)\settings\ranking\explain\[workerId]
+app\(admin)\settings\ranking\explain\[workerId]\page.tsx
 app\(admin)\users\[userId]
 app\(admin)\users\page.tsx
 app\(admin)\users\[userId]\page.tsx
@@ -355,6 +359,7 @@ app\api\admin\workers\[workerId]\earnings
 app\api\admin\workers\[workerId]\jobs
 app\api\admin\workers\[workerId]\performance
 app\api\admin\workers\[workerId]\ranking
+app\api\admin\workers\[workerId]\ranking-explain
 app\api\admin\workers\[workerId]\ranking-flags
 app\api\admin\workers\[workerId]\reviews
 app\api\admin\workers\[workerId]\verification
@@ -390,6 +395,7 @@ app\api\admin\workers\[workerId]\earnings\route.ts
 app\api\admin\workers\[workerId]\jobs\route.ts
 app\api\admin\workers\[workerId]\performance\route.ts
 app\api\admin\workers\[workerId]\ranking\route.ts
+app\api\admin\workers\[workerId]\ranking-explain\route.ts
 app\api\admin\workers\[workerId]\ranking-flags\route.ts
 app\api\admin\workers\[workerId]\reviews\route.ts
 app\api\admin\workers\[workerId]\verification\cnic
@@ -518,7 +524,14 @@ components\promotions\PromotionDetailView.tsx
 components\promotions\PromotionGuardrails.tsx
 components\promotions\PromotionsSection.tsx
 components\ranking\ConfigEditorDialog.tsx
+components\ranking\explain-ui.ts
+components\ranking\ExplainAdjustments.tsx
+components\ranking\ExplainPerformance.tsx
+components\ranking\ExplainSearchForm.tsx
+components\ranking\ExplainSummary.tsx
+components\ranking\ExplainTerms.tsx
 components\ranking\OverridesPanel.tsx
+components\ranking\RankingExplainView.tsx
 components\ranking\RankingSection.tsx
 components\ranking\SimulatePanel.tsx
 components\reviews\RatingAuditTab.tsx

@@ -92,7 +92,7 @@ export default function UserProfileHeader({ user, isLoading, error }: UserProfil
         <div className="flex gap-6 text-right">
           <div>
             <p className="text-2xl font-semibold text-gray-900">{user.totalBookings}</p>
-            <p className="text-xs text-gray-400">Bookings</p>
+            <p className="text-xs text-gray-400">Bookings ({user.completedBookings} completed)</p>
           </div>
           <div>
             <p className="text-2xl font-semibold text-gray-900">{user.addressCount}</p>

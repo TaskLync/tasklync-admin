@@ -3,17 +3,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 
+// Real count from the bookings table (users.total_bookings is not reliable).
+const BOOKING_COUNT_SQL = '(SELECT count(*)::int FROM bookings bk WHERE bk.user_id = u.id)'
+
 const BOOKING_BUCKETS: Record<string, string> = {
-  '0': 'u.total_bookings = 0',
-  '1-5': 'u.total_bookings BETWEEN 1 AND 5',
-  '5-20': 'u.total_bookings BETWEEN 6 AND 20',
-  '20+': 'u.total_bookings > 20',
+  '0': `${BOOKING_COUNT_SQL} = 0`,
+  '1-5': `${BOOKING_COUNT_SQL} BETWEEN 1 AND 5`,
+  '5-20': `${BOOKING_COUNT_SQL} BETWEEN 6 AND 20`,
+  '20+': `${BOOKING_COUNT_SQL} > 20`,
 }
 
 const SORT_COLUMNS: Record<string, string> = {
   created_at: 'u.created_at',
   name: 'u.name',
-  total_bookings: 'u.total_bookings',
+  total_bookings: BOOKING_COUNT_SQL,
 }
 
 const HAS_DISPUTE_SQL = 'EXISTS (SELECT 1 FROM disputes d WHERE d.raised_by = u.id)'
@@ -88,7 +91,7 @@ export async function GET(req: NextRequest) {
   const listSql = `
     SELECT
       u.id, u.name, u.phone, u.email, u.avatar_url,
-      u.total_bookings, u.is_active, u.created_at,
+      ${BOOKING_COUNT_SQL} AS total_bookings, u.is_active, u.created_at,
       fn_user_status(u.is_active, u.deleted_at, u.banned_at, u.suspended_until) AS status,
       ${HAS_DISPUTE_SQL} AS has_dispute,
       (SELECT a.city FROM user_addresses a WHERE a.user_id = u.id AND a.is_default = true LIMIT 1) AS city

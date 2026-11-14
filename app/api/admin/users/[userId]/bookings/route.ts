@@ -14,7 +14,7 @@ export async function GET(
 
   try {
     const { rows } = await db.query(
-      `SELECT b.id, b.status, b.estimated_total AS amount, b.scheduled_at, b.created_at,
+      `SELECT b.id, b.status::text AS status, b.estimated_total AS amount, b.scheduled_at, b.created_at,
               w.name AS worker_name, c.name AS category
        FROM bookings b
        LEFT JOIN workers w ON w.id = b.worker_id
@@ -31,7 +31,7 @@ export async function GET(
         workerName: r.worker_name,
         category: r.category,
         status: r.status,
-        amount: r.amount,
+        amount: r.amount != null ? Number(r.amount) : null,
         scheduledAt: r.scheduled_at,
         createdAt: r.created_at,
       })),

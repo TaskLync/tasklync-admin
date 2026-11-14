@@ -13,10 +13,19 @@ export async function GET(
   const { userId } = await params
 
   try {
-    const { rows } = await db.query(
-      `SELECT * FROM get_user_overview($1)`,
-      [userId]
-    )
+    // users.total_bookings is only filled by a Kafka consumer in user-service,
+    // so we count the real rows in bookings instead.
+    const [overview, countRes] = await Promise.all([
+      db.query(`SELECT * FROM get_user_overview($1)`, [userId]),
+      db.query(
+        `SELECT count(*)::int AS total,
+                count(*) FILTER (WHERE status::text IN ('COMPLETED','AUTO_COMPLETED'))::int AS completed
+         FROM bookings WHERE user_id = $1`,
+        [userId]
+      ),
+    ])
+
+    const rows = overview.rows
     if (rows.length === 0) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
@@ -29,7 +38,8 @@ export async function GET(
       avatarUrl: r.avatar_url,
       preferredLanguage: r.preferred_language,
       preferredCurrency: r.preferred_currency,
-      totalBookings: r.total_bookings,
+      totalBookings: countRes.rows[0]?.total ?? 0,
+      completedBookings: countRes.rows[0]?.completed ?? 0,
       isActive: r.is_active,
       role: r.role,
       status: r.status,

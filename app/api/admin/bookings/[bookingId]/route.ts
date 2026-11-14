@@ -37,7 +37,11 @@ export async function GET(
          ${PAYMENT_STATUS_SQL} AS payment_status,
          ${CITY_SQL} AS city,
          u.id AS user_id, u.name AS user_name, u.phone AS user_phone, u.email AS user_email,
-         u.avatar_url AS user_avatar, u.total_bookings AS user_total_bookings,
+         u.avatar_url AS user_avatar,
+         (SELECT count(*)::int FROM bookings x WHERE x.user_id = b.user_id) AS user_total_bookings,
+         (SELECT count(*)::int FROM bookings x
+            WHERE x.user_id = b.user_id
+              AND x.status::text IN ('COMPLETED','AUTO_COMPLETED')) AS user_completed_bookings,
          fn_user_status(u.is_active, u.deleted_at, u.banned_at, u.suspended_until) AS user_status,
          w.id AS worker_id, w.name AS worker_name, w.phone AS worker_phone,
          w.avatar_url AS worker_avatar, w.avg_rating, w.total_reviews, w.city AS worker_city,
@@ -115,6 +119,7 @@ export async function GET(
         avatarUrl: r.user_avatar,
         status: r.user_status,
         totalBookings: r.user_total_bookings ?? 0,
+        completedBookings: r.user_completed_bookings ?? 0,
       },
       worker: {
         id: r.worker_id,

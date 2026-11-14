@@ -39,10 +39,15 @@ export const DEFAULT_AUDIT_FILTERS: AuditFilters = {
 
 type Primitive = string | number | null | undefined
 
+// 'all' means "no filter" for every key EXCEPT `tab`, where 'all' is a real value
+// (the "All reviews" tab). If it were dropped, the server would fall back to 'flagged'.
+const KEEP_ALL_KEYS = new Set(['tab'])
+
 function toQs(filters: object): string {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(filters as Record<string, Primitive>)) {
-    if (v === null || v === undefined || v === '' || v === 'all') continue
+    if (v === null || v === undefined || v === '') continue
+    if (v === 'all' && !KEEP_ALL_KEYS.has(k)) continue
     qs.set(k, String(v))
   }
   return qs.toString()

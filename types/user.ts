@@ -99,6 +99,7 @@ export interface UserDetail {
   preferredLanguage: string
   preferredCurrency: string
   totalBookings: number
+  completedBookings: number
   isActive: boolean
   role: string
   status: UserStatus

@@ -83,6 +83,7 @@ export interface BookingUserParty {
   avatarUrl: string | null
   status: string | null
   totalBookings: number
+  completedBookings: number
 }
 
 export interface BookingWorkerParty {

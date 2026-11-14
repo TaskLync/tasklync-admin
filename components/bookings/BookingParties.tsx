@@ -65,7 +65,7 @@ export default function BookingParties({ booking }: { booking: BookingDetail }) 
                   label={ACCOUNT_STATUS_LABEL[user.status as WorkerStatus] ?? user.status}
                 />
               )}
-              <span>{user.totalBookings} bookings</span>
+              <span>{user.totalBookings} bookings ({user.completedBookings} completed)</span>
             </div>
           </div>
         </div>

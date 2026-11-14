@@ -20,7 +20,7 @@ import type { ReviewListItem } from '@/types/review'
 export { withTx } from '@/lib/bookings-api'
 export { isUuid }
 
-const CATEGORY_RE = /^[a-z0-9-]{1,50}$/i
+const CATEGORY_RE = /^[a-z0-9-_]{1,50}$/i
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 // ---------- Errors ----------
@@ -107,12 +107,17 @@ export function parseTab(value: string | null): ReviewListTab {
 
 // ---------- List SQL ----------
 
+// The category comes from the booking first (always set), and only falls back to
+// reviewable_bookings.category_id, which review-service does not always fill.
+export const CATEGORY_ID_SQL = `COALESCE(b.category_id, rb.category_id)`
+
 export const REVIEW_FROM_SQL = `
   FROM reviews r
   LEFT JOIN reviewable_bookings rb ON rb.booking_id = r.booking_id
+  LEFT JOIN bookings b             ON b.id = r.booking_id
   LEFT JOIN users u                ON u.id = r.user_id
   LEFT JOIN workers w              ON w.id = r.worker_id
-  LEFT JOIN categories c           ON c.id = rb.category_id
+  LEFT JOIN categories c           ON c.id = ${CATEGORY_ID_SQL}
 `
 
 export const REVIEW_COLUMNS_SQL = `
@@ -121,7 +126,7 @@ export const REVIEW_COLUMNS_SQL = `
   (r.worker_reply IS NOT NULL) AS has_worker_reply,
   r.moderation_status::text AS moderation_status,
   r.report_count, r.edited_at, r.created_at,
-  rb.category_id, c.name AS category_name, w.city,
+  ${CATEGORY_ID_SQL} AS category_id, c.name AS category_name, w.city,
   u.name AS user_name, u.phone AS user_phone,
   w.name AS worker_name, w.phone AS worker_phone,
   (SELECT count(*) FROM review_reports rr
@@ -167,7 +172,7 @@ export function buildReviewWhere(sp: URLSearchParams) {
   }
   if (city !== 'all') where.push(`w.city = ${push(city)}`)
   if (categoryId !== 'all' && CATEGORY_RE.test(categoryId)) {
-    where.push(`rb.category_id = ${push(categoryId)}`)
+    where.push(`${CATEGORY_ID_SQL} = ${push(categoryId)}`)
   }
   if ((MODERATION_STATUSES as readonly string[]).includes(status)) {
     where.push(`r.moderation_status::text = ${push(status)}`)

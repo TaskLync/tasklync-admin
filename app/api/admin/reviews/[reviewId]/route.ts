@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/rbac-guard'
 import {
   BURST_ONE_STAR_SQL,
+  CATEGORY_ID_SQL,
   SHORT_ONE_STAR_SQL,
   isUuid,
   reviewErrorResponse,
@@ -33,7 +34,7 @@ export async function GET(
          r.worker_reply, r.worker_replied_at, r.moderation_status::text AS moderation_status,
          r.report_count, r.edited_at, r.created_at, r.updated_at,
          r.moderated_at, r.moderation_note, mb.full_name AS moderated_by_name,
-         rb.review_deadline, rb.category_id, c.name AS category_name,
+         rb.review_deadline, ${CATEGORY_ID_SQL} AS category_id, c.name AS category_name,
          b.status::text AS booking_status, b.estimated_total, b.currency,
          b.scheduled_at, b.completed_at,
          u.id AS user_id, u.name AS user_name, u.phone AS user_phone,
@@ -54,7 +55,7 @@ export async function GET(
        LEFT JOIN bookings b             ON b.id = r.booking_id
        LEFT JOIN users u                ON u.id = r.user_id
        LEFT JOIN workers w              ON w.id = r.worker_id
-       LEFT JOIN categories c           ON c.id = rb.category_id
+       LEFT JOIN categories c           ON c.id = ${CATEGORY_ID_SQL}
        LEFT JOIN admin_users mb         ON mb.id = r.moderated_by
        WHERE r.id = $1`,
       [reviewId]
