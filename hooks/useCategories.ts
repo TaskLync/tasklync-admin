@@ -5,6 +5,7 @@ import { fetcher } from '@/lib/swr-fetcher'
 import type {
   CategoryListResponse, CategoryFilters, CategoryKpis, CategoryDetail,
   CategoryFormInput, ServiceItem, ServiceFormInput, PricingConfig, PricingConfigInput,
+  PricingConfigHistoryEntry,
 } from '@/types/category'
 
 export const DEFAULT_CATEGORY_FILTERS: CategoryFilters = {
@@ -73,6 +74,11 @@ export function useCategoryServices(categoryId: string) {
 export function usePricingConfig() {
   const { data, error, isLoading, mutate } = useSWR<PricingConfig>('/api/admin/pricing-config', fetcher)
   return { config: data, isLoading, error, mutate }
+}
+
+export function usePricingHistory() {
+  const { data, error, isLoading, mutate } = useSWR<PricingConfigHistoryEntry[]>('/api/admin/pricing-config/history', fetcher)
+  return { history: data ?? [], isLoading, error, mutate }
 }
 
 // --- Mutations ---

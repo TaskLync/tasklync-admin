@@ -76,26 +76,71 @@ export interface ServiceFormInput {
   sortOrder?: number
 }
 
+export type TaxAppliesTo = 'subtotal' | 'subtotal_and_fee'
+
+/** Live fee / commission / tax configuration (platform_pricing_config), read by booking-service. */
 export interface PricingConfig {
+  customerFeeEnabled: boolean
   customerFeePercent: number
+  workerCommissionEnabled: boolean
   workerCommissionPercent: number
-  /** informational: customer + worker */
+  taxEnabled: boolean
+  taxPercent: number
+  taxLabel: string
+  taxAppliesTo: TaxAppliesTo
+  /** Customer cancellation fees (share of the total kept). Cancelling before the worker accepts is always free. */
+  cancellationFeesEnabled: boolean
+  cancelFeeOver24hPercent: number
+  cancelFeeWithin24hPercent: number
+  cancelFeeAfterArrivalPercent: number
+  /** Fee recorded when the worker reports a customer no-show (capped at the booking total). */
+  noShowFeeEnabled: boolean
+  noShowFeePkr: number
+  /** informational: effective customer fee + effective worker commission */
   platformFeePercent: number
   demandThreshold: number
   demandMultiplier: number
-  urgencySameDayMultiplier: number
-  urgencyWithin2hMultiplier: number
   offPeakMultiplier: number
+  version: number
+  effectiveFrom: string
   updatedAt: string
 }
 
 export interface PricingConfigInput {
-  customerFeePercent?: number
-  workerCommissionPercent?: number
-  platformFeePercent: number
+  customerFeeEnabled: boolean
+  customerFeePercent: number
+  workerCommissionEnabled: boolean
+  workerCommissionPercent: number
+  taxEnabled: boolean
+  taxPercent: number
+  taxLabel: string
+  taxAppliesTo: TaxAppliesTo
+  cancellationFeesEnabled: boolean
+  cancelFeeOver24hPercent: number
+  cancelFeeWithin24hPercent: number
+  cancelFeeAfterArrivalPercent: number
+  noShowFeeEnabled: boolean
+  noShowFeePkr: number
   demandThreshold: number
   demandMultiplier: number
-  urgencySameDayMultiplier: number
-  urgencyWithin2hMultiplier: number
   offPeakMultiplier: number
+  /** Version the admin was looking at; a newer saved version makes the save fail (409) instead of overwriting it. */
+  expectedVersion: number
+  /** Optional note stored in the configuration history. */
+  reason?: string
+}
+
+export interface PricingConfigHistoryEntry {
+  version: number
+  changedAt: string
+  changedByEmail: string | null
+  reason: string | null
+  customerFeePercent: number
+  customerFeeEnabled: boolean
+  workerCommissionPercent: number
+  workerCommissionEnabled: boolean
+  taxEnabled: boolean
+  taxPercent: number
+  cancellationFeesEnabled: boolean
+  noShowFeeEnabled: boolean
 }
