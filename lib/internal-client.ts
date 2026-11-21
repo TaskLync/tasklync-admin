@@ -29,13 +29,29 @@ interface CallOptions {
   timeoutMs?: number
 }
 
+/**
+ * How to authenticate to a service.
+ *  - Inside the services' network (URL = the service itself): its internal key, x-internal-key.
+ *  - Through the public gateway's admin side door (URL contains /internal-admin/, used by the panel on
+ *    Vercel): GATEWAY_ADMIN_KEY in x-admin-internal-key. The gateway adds the internal key itself.
+ * Returns null when the needed key is missing.
+ */
+export function serviceAuthHeaders(serviceUrl: string, internalKey: string | undefined): Record<string, string> | null {
+  if (serviceUrl.includes('/internal-admin/')) {
+    const adminKey = process.env.GATEWAY_ADMIN_KEY
+    return adminKey ? { 'x-admin-internal-key': adminKey } : null
+  }
+  return internalKey ? { 'x-internal-key': internalKey } : null
+}
+
 export async function callService<T = unknown>(
   target: ServiceTarget,
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   opts: CallOptions = {}
 ): Promise<T> {
-  if (!target.url || !target.key) {
+  const auth = target.url ? serviceAuthHeaders(target.url, target.key) : null
+  if (!target.url || !auth) {
     throw new ServiceError(503, `${target.name} is not configured on the admin server.`, 'NOT_CONFIGURED', target.name)
   }
 
@@ -54,7 +70,7 @@ export async function callService<T = unknown>(
       headers: {
         ...(opts.form ? {} : { 'Content-Type': 'application/json' }),
         ...opts.headers,
-        'x-internal-key': target.key,
+        ...auth,
       },
       body: opts.form ?? (opts.body ? JSON.stringify(opts.body) : undefined),
       signal: ctrl.signal,

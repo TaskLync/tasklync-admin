@@ -2,6 +2,8 @@
 // Server-only HTTP client for payment-service /internal/* routes.
 // The admin panel never writes payment tables itself.
 
+import { serviceAuthHeaders } from '@/lib/internal-client'
+
 export class PaymentServiceError extends Error {
   status: number
   code?: string
@@ -13,7 +15,7 @@ export class PaymentServiceError extends Error {
 }
 
 const BASE = process.env.PAYMENT_SERVICE_URL
-const KEY = process.env.PAYMENT_SERVICE_INTERNAL_KEY
+const KEY = process.env.PAYMENT_SERVICE_INTERNAL_KEY ?? process.env.INTERNAL_API_KEY
 const TIMEOUT_MS = 20_000
 
 export async function callPaymentService<T = unknown>(
@@ -21,10 +23,11 @@ export async function callPaymentService<T = unknown>(
   path: string,
   body?: object
 ): Promise<T> {
-  if (!BASE || !KEY) {
+  const auth = BASE ? serviceAuthHeaders(BASE, KEY) : null
+  if (!BASE || !auth) {
     throw new PaymentServiceError(
       503,
-      'payment-service is not configured (PAYMENT_SERVICE_URL / PAYMENT_SERVICE_INTERNAL_KEY).'
+      'payment-service is not configured (PAYMENT_SERVICE_URL + PAYMENT_SERVICE_INTERNAL_KEY, or GATEWAY_ADMIN_KEY via the gateway).'
     )
   }
 
@@ -35,7 +38,7 @@ export async function callPaymentService<T = unknown>(
   try {
     res = await fetch(`${BASE.replace(/\/$/, '')}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json', 'x-internal-key': KEY },
+      headers: { 'Content-Type': 'application/json', ...auth },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
       cache: 'no-store',

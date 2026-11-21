@@ -3,9 +3,9 @@
   "version": "1.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3200",
+    "dev": "next dev -p 3100",
     "build": "next build",
-    "start": "next start -p 3200",
+    "start": "next start -p 3100",
     "lint": "eslint",
     "migrate": "tsx scripts/migrate.ts",
     "test": "vitest run"

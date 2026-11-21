@@ -4,7 +4,7 @@
 > **Owner:** Backend Platform Team
 > **Last Updated:** November 2026
 > **Status:** 🟡 In Development (round 2 audit fixes applied, Coupons module added, Promotions and Ranking modules added, Ranking explain page added)
-> **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3200`
+> **URL:** `https://admin.tasklync.pk` · dev `http://localhost:3100`
 > **Repo location of this file:** `docs/ADMIN_PANEL.md`
 
 This document replaces v1.3.0. What changed is listed in section 22.
@@ -129,7 +129,7 @@ READS: payments, worker_payouts, refunds, worker_wallets, dead_letters, messages
 | MFA | mandatory for every role by default |
 | DB pool | max 10 |
 | Super admins | max 2 |
-| Dev port | **3200** (`next dev -p 3200` in `package.json`; 3000 is the API gateway) |
+| Dev port | **3100** (`next dev -p 3100` in `package.json`; 3000 is the API gateway) |
 | Day boundary for all KPIs and money | Asia/Karachi, completion time for revenue |
 
 ---
@@ -1076,14 +1076,14 @@ npm install
 Copy-Item .env.example .env          # DATABASE_URL, REDIS_URL, ADMIN_JWT_SECRET, ADMIN_MFA_ENCRYPTION_KEY + service URLs
 npm run migrate                      # existing database: npm run migrate -- --baseline=015 the first time
 npx tsx scripts/seed-super-admin.ts  # first super admin (max 2)
-npm run dev                          # http://localhost:3200
+npm run dev                          # http://localhost:3100
 ```
 
 First login → password → forced MFA enrolment (save the 10 backup codes) → dashboard. More admins: **Settings → Admin users**.
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` / `build` / `start` / `lint` | Next.js (port 3200) |
+| `npm run dev` / `build` / `start` / `lint` | Next.js (port 3100) |
 | `npm run migrate` | apply new migrations (`admin_migrations` table) |
 | `npm test` | Vitest |
 | `npx tsx scripts/generate-broadcast-templates.ts [outDir]` | push / SMS template files for notification-service (re-run after catalog changes such as `coupon_gift`) |
@@ -1460,7 +1460,7 @@ SELECT to_regclass('admin_trusted_devices') AS m015, to_regclass('review_admin_n
 - Deploy order: booking-service migration 013 (coupons) before this panel version. **No admin migration 017** is created.
 
 **Documentation drift corrected**
-- Dev port is **3200** (`next dev -p 3200` in `package.json`), not 3100.
+- Dev port is **3100** (`next dev -p 3100` in `package.json`).
 - `components/categories/PricingConfigPanel.tsx` (old single-fee form) is dead code; the live editor is `components/settings/PricingSettings.tsx`. `app/(admin)/categories/page.tsx` still links to `/categories/pricing`, which has no page (should point to `/settings`).
 - `db/migrations/001_admin_auth.sql` is the original `resource_id UUID` version; migration 016 fixes it, this is expected.
 - `BookingActionDialogs.tsx` Reassign text still says "creates a new pending booking" (booking v3.1.0 reassigns the same booking).
