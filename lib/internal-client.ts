@@ -21,6 +21,10 @@ export interface ServiceTarget {
 
 interface CallOptions {
   body?: object
+  /** Multipart upload instead of JSON. fetch sets the boundary header itself. */
+  form?: FormData
+  /** Extra headers (e.g. the acting admin on a multipart call, which has no JSON body). */
+  headers?: Record<string, string>
   query?: Record<string, string | number | undefined>
   timeoutMs?: number
 }
@@ -47,8 +51,12 @@ export async function callService<T = unknown>(
   try {
     res = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json', 'x-internal-key': target.key },
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      headers: {
+        ...(opts.form ? {} : { 'Content-Type': 'application/json' }),
+        ...opts.headers,
+        'x-internal-key': target.key,
+      },
+      body: opts.form ?? (opts.body ? JSON.stringify(opts.body) : undefined),
       signal: ctrl.signal,
       cache: 'no-store',
     })

@@ -92,6 +92,12 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'ranking:view': ['SUPER_ADMIN', 'OPS'],
   'ranking:flag': ['SUPER_ADMIN', 'OPS'],         // worker ranking flags
   'ranking:config': ['SUPER_ADMIN'],              // versions, activate, shadow, overrides, simulate
+
+  // Promotional banners (customer app home carousel; rules + visibility live in booking-service)
+  'banners:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'banners:manage': ['SUPER_ADMIN', 'OPS'],       // create, edit, upload images, reorder, carousel settings
+  'banners:publish': ['SUPER_ADMIN', 'OPS'],      // publish, unpublish, activate, deactivate
+  'banners:delete': ['SUPER_ADMIN', 'OPS'],
 }
 
 // Path prefix -> permission, used by middleware.ts. Order matters (find() + startsWith): specific before general.
@@ -112,6 +118,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/reviews', permission: 'reviews:view' },
   { prefix: '/coupons', permission: 'coupons:view' },
   { prefix: '/promotions', permission: 'promotions:view' },
+  { prefix: '/marketing/banners', permission: 'banners:view' },
   { prefix: '/waitlist', permission: 'waitlist:view' },
 ]
 

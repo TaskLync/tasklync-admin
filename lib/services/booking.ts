@@ -74,3 +74,38 @@ export const promotionSvc = {
   action: (id: string, action: string, admin: AdminIdentity, body: object = {}) =>
     callService(target(), 'POST', `/internal/admin/promotions/${id}/${action}`, { body: { ...who(admin), ...body } }),
 }
+
+/** Promotional banners (customer app carousel). booking-service owns the rules and the visibility decision. */
+export const bannerSvc = {
+  list: (query: Record<string, string | number | undefined>) =>
+    callService<{ items: unknown[]; total: number; page: number; page_size: number }>(
+      target(), 'GET', '/internal/admin/banners', { query }),
+  get: (id: string) => callService(target(), 'GET', `/internal/admin/banners/${id}`),
+  create: (admin: AdminIdentity, body: object) =>
+    callService(target(), 'POST', '/internal/admin/banners', { body: { ...who(admin), ...body } }),
+  update: (id: string, admin: AdminIdentity, body: object) =>
+    callService(target(), 'PATCH', `/internal/admin/banners/${id}`, { body: { ...who(admin), ...body } }),
+  setEnabled: (id: string, admin: AdminIdentity, version: number, isEnabled: boolean) =>
+    callService(target(), 'PATCH', `/internal/admin/banners/${id}/status`, {
+      body: { ...who(admin), version, is_enabled: isEnabled },
+    }),
+  publish: (id: string, admin: AdminIdentity, version: number) =>
+    callService(target(), 'POST', `/internal/admin/banners/${id}/publish`, { body: { ...who(admin), version } }),
+  unpublish: (id: string, admin: AdminIdentity, version: number) =>
+    callService(target(), 'POST', `/internal/admin/banners/${id}/unpublish`, { body: { ...who(admin), version } }),
+  remove: (id: string, admin: AdminIdentity) =>
+    callService<{ id: string; campaign_name: string }>(target(), 'DELETE', `/internal/admin/banners/${id}`, { body: who(admin) }),
+  reorder: (admin: AdminIdentity, placement: string, ids: string[]) =>
+    callService<{ items: unknown[] }>(target(), 'PATCH', '/internal/admin/banners/reorder', {
+      body: { ...who(admin), placement, ids },
+    }),
+  placement: (code: string) => callService(target(), 'GET', `/internal/admin/banners/placements/${code}`),
+  updatePlacement: (code: string, admin: AdminIdentity, body: object) =>
+    callService(target(), 'PUT', `/internal/admin/banners/placements/${code}`, { body: { ...who(admin), ...body } }),
+  uploadImage: (admin: AdminIdentity, file: Blob, filename: string) => {
+    const form = new FormData()
+    form.append('image', file, filename)
+    return callService<{ url: string; public_id: string; width: number; height: number; bytes: number }>(
+      target(), 'POST', '/internal/admin/banners/media', { form, headers: { 'x-admin-id': admin.id }, timeoutMs: 75_000 })
+  },
+}

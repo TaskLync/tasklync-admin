@@ -14,6 +14,7 @@ import {
   Bell,
   Ticket,
   Percent,
+  Megaphone,
   ListOrdered,
   Map,
   Tags,
@@ -106,6 +107,12 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Promotions',
     href: '/promotions',
     icon: Percent,
+    allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  },
+  {
+    label: 'Promo Banners',
+    href: '/marketing/banners',
+    icon: Megaphone,
     allowedRoles: ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
   },
   {
