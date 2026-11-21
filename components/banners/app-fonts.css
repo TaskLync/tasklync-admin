@@ -1,0 +1,17 @@
+/* The customer app's bundled faces (src/config/fonts.ts), one family per file exactly as React Native
+   registers them. Renderers use font-weight: normal with these names, as the app does, so the browser
+   never synthesises a fake bold. Files are copied from the app (public/fonts/app). */
+@font-face { font-family: 'Poppins-Regular'; src: url('/fonts/app/Poppins-Regular.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Poppins-Medium'; src: url('/fonts/app/Poppins-Medium.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Poppins-SemiBold'; src: url('/fonts/app/Poppins-SemiBold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Poppins-Bold'; src: url('/fonts/app/Poppins-Bold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Poppins-ExtraBold'; src: url('/fonts/app/Poppins-ExtraBold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'PlusJakartaSans-Regular'; src: url('/fonts/app/PlusJakartaSans-Regular.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'PlusJakartaSans-Medium'; src: url('/fonts/app/PlusJakartaSans-Medium.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'PlusJakartaSans-SemiBold'; src: url('/fonts/app/PlusJakartaSans-SemiBold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'PlusJakartaSans-Bold'; src: url('/fonts/app/PlusJakartaSans-Bold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter-Regular'; src: url('/fonts/app/Inter-Regular.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter-Medium'; src: url('/fonts/app/Inter-Medium.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter-SemiBold'; src: url('/fonts/app/Inter-SemiBold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter-Bold'; src: url('/fonts/app/Inter-Bold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter-ExtraBold'; src: url('/fonts/app/Inter-ExtraBold.ttf') format('truetype'); font-weight: normal; font-style: normal; font-display: swap; }

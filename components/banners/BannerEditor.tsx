@@ -16,6 +16,9 @@ import {
 } from '@/lib/banner-constants'
 import type { BannerDetail, BannerFormValues } from '@/types/banner'
 import BannerPreview from './BannerPreview'
+import DesignPanel from './DesignPanel'
+import { toDesignFonts, useFontLibrary } from '@/hooks/useFontLibrary'
+import { compactDesign } from '@/lib/banner-design'
 import BannerStatsPanel from './BannerStatsPanel'
 import TargetPicker from './TargetPicker'
 import { STATE_TONE } from './BannersSection'
@@ -61,7 +64,11 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
   const [busy, setBusy] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [confirm, setConfirm] = useState<'delete' | 'unpublish' | null>(null)
-  const [phone, setPhone] = useState<328 | 380>(328)
+  const [phone, setPhone] = useState<328 | 380 | 560>(328)
+  const [overflow, setOverflow] = useState(false)
+  const { fonts: libraryFonts } = useFontLibrary(true)
+  const designFonts = useMemo(() => toDesignFonts(libraryFonts), [libraryFonts])
+  const design = useMemo(() => compactDesign(v.designConfig), [v.designConfig])
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Re-sync after a save/refresh brings a newer version from the server.
@@ -191,6 +198,12 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
           {banner?.status === 'PUBLISHED' && canPublish && (
             <Button variant="secondary" onClick={() => setConfirm('unpublish')} disabled={!!busy}>Unpublish</Button>
           )}
+          {canManage && dirty && (
+            <Button variant="ghost" onClick={() => { setV(initial); setTouched(false) }} disabled={!!busy || uploading}
+              title="Undo every unsaved edit, design settings included">
+              Discard changes
+            </Button>
+          )}
           {canManage && (
             <Button variant={banner?.status === 'DRAFT' ? 'secondary' : 'primary'} onClick={save} loading={busy === 'save'}
               disabled={!!busy || uploading || (!!banner && !dirty)}>
@@ -237,12 +250,12 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
                 <input className={inputCls} value={v.offerText} onChange={(e) => set('offerText', e.target.value)} placeholder="10% Off" />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Headline" error={shown.title} count={v.title.length} max={LIMITS.title} hint="Two lines at most on the phone.">
+                <Field label="Headline" error={shown.title} count={v.title.length} max={LIMITS.title} hint="Two lines by default; change it under Design &amp; typography.">
                   <input className={inputCls} value={v.title} onChange={(e) => set('title', e.target.value)} placeholder="Get 10% Off on Your First Booking" />
                 </Field>
               </div>
               <div className="sm:col-span-2">
-                <Field label="Subtitle / tagline (optional)" error={shown.subtitle} count={v.subtitle.length} max={LIMITS.subtitle} hint="One line; longer text is cut with an ellipsis.">
+                <Field label="Subtitle / tagline (optional)" error={shown.subtitle} count={v.subtitle.length} max={LIMITS.subtitle} hint="One line by default; longer text ends with an ellipsis.">
                   <input className={inputCls} value={v.subtitle} onChange={(e) => set('subtitle', e.target.value)} placeholder="Quality service, right at your doorstep." />
                 </Field>
               </div>
@@ -337,6 +350,16 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
             </div>
           </section>
 
+          <DesignPanel
+            value={v.designConfig}
+            onChange={(d) => set('designConfig', d)}
+            fonts={designFonts}
+            ctaStyle={v.ctaStyle}
+            ctaShown={v.ctaEnabled && v.ctaActionType !== 'NONE'}
+            error={shown.designConfig}
+            overflow={overflow}
+          />
+
           <section className="rounded-lg border border-gray-200 bg-white p-4">
             <h2 className="mb-1 text-sm font-semibold text-gray-900">Schedule</h2>
             <p className="mb-3 text-xs text-gray-500">Pakistan time (PKT, UTC+5). Leave the start empty to go live on publish, and the end empty to run until you stop it.</p>
@@ -353,15 +376,15 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-900">Preview</h2>
               <div className="flex rounded-md border border-gray-300 p-0.5 text-xs">
-                {([328, 380] as const).map((w) => (
+                {([328, 380, 560] as const).map((w) => (
                   <button key={w} type="button" onClick={() => setPhone(w)}
                     className={`h-6 rounded px-2 ${phone === w ? 'bg-[#1F6F5F]/10 font-medium text-[#1F6F5F]' : 'text-gray-500'}`}>
-                    {w === 328 ? 'Small phone' : 'Large phone'}
+                    {w === 328 ? 'Small phone' : w === 380 ? 'Large phone' : 'Tablet'}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="flex justify-center rounded-md bg-[#F7F8F7] px-4 py-6">
+            <div className="flex justify-center overflow-x-auto rounded-md bg-[#F7F8F7] px-4 py-6">
               <BannerPreview
                 width={phone}
                 title={v.title}
@@ -371,9 +394,15 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
                 imageUrl={v.imageUrl}
                 imagePosition={v.imagePosition}
                 cta={v.ctaEnabled && v.ctaActionType !== 'NONE' ? { label: v.ctaLabel, style: v.ctaStyle } : null}
+                design={design}
+                fonts={designFonts}
+                onOverflow={setOverflow}
               />
             </div>
-            <p className="mt-2 text-xs text-gray-400">Actual size in the customer app (156 px tall). If several banners are live they swipe, with dots below.</p>
+            <p className="mt-2 text-xs text-gray-400">
+              Actual size in the customer app (156 dp tall), drawn with the app&apos;s own fonts. Updates as you type; nothing is saved until you press Save.
+            </p>
+            {overflow && <p className="mt-1 text-xs text-amber-700">Some content is cut off at this width.</p>}
           </section>
 
           {banner && (

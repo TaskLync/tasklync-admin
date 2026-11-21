@@ -105,6 +105,19 @@ export async function callService<T = unknown>(
 /** Maps any error from an action route to a JSON response. 5xx from a service becomes 502. */
 export function serviceErrorResponse(err: unknown, tag: string) {
   if (err instanceof ServiceError) {
+    // A 401/403 from a service means the panel's service key was rejected, not that the admin's
+    // session expired. Passing it through as 401 would make auth-fetch refresh the session and
+    // retry forever, so surface it as a 502 with a clear message instead.
+    if (err.status === 401 || err.status === 403) {
+      console.error(tag, err.service, err.status, 'service rejected the admin panel credentials:', err.message)
+      return NextResponse.json(
+        {
+          error: `${err.service ?? 'Backend service'} rejected the admin panel's credentials. Check GATEWAY_ADMIN_KEY (or the service internal key).`,
+          code: 'SERVICE_AUTH_FAILED',
+        },
+        { status: 502 }
+      )
+    }
     const status = err.status >= 500 ? 502 : err.status
     if (err.status >= 500) console.error(tag, err.service, err.status, err.message)
     return NextResponse.json({ error: err.message, code: err.code }, { status })

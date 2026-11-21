@@ -10,6 +10,13 @@ export default function SettingsPage() {
       </div>
       <PricingSettings />
       <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-gray-900">Brand &amp; Typography</h2>
+        <p className="mt-1 text-xs text-gray-500">Upload, preview and activate the fonts promotional banners can use in the customer app.</p>
+        <Link href="/settings/brand/fonts" className="mt-3 inline-block text-sm text-[#1F6F5F] hover:underline">
+          Open the font library
+        </Link>
+      </div>
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
         <h2 className="text-sm font-semibold text-gray-900">Admin users</h2>
         <p className="mt-1 text-xs text-gray-500">Create admins, change roles, deactivate, reset MFA.</p>
         <Link href="/settings/admins" className="mt-3 inline-block text-sm text-[#1F6F5F] hover:underline">

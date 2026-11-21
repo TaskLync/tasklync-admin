@@ -1,12 +1,13 @@
 // lib/banner-form.ts  (client safe, pure): the banner editor's form model.
 import { CTA_ACTION_META, LIMITS, fromPktInput, toPktInput } from '@/lib/banner-constants'
 import type { BannerDetail, BannerFormValues } from '@/types/banner'
+import { compactDesign, validateDesign } from '@/lib/banner-design'
 
 export const EMPTY_BANNER_FORM: BannerFormValues = {
   campaignName: '', internalNotes: '', title: '', subtitle: '', badgeText: '', offerText: '',
   imageUrl: null, imagePublicId: null, imageWidth: null, imageHeight: null, imagePosition: 'RIGHT',
   ctaEnabled: true, ctaLabel: 'Book Now', ctaStyle: 'ON_DARK', ctaActionType: 'EXPLORE', ctaParams: {},
-  startsAt: '', expiresAt: '',
+  designConfig: {}, startsAt: '', expiresAt: '',
 }
 
 export function fromBanner(b: BannerDetail): BannerFormValues {
@@ -15,7 +16,7 @@ export function fromBanner(b: BannerDetail): BannerFormValues {
     badgeText: b.badgeText ?? '', offerText: b.offerText ?? '', imageUrl: b.imageUrl, imagePublicId: b.imagePublicId,
     imageWidth: b.imageWidth, imageHeight: b.imageHeight, imagePosition: b.imagePosition, ctaEnabled: b.ctaEnabled,
     ctaLabel: b.ctaLabel ?? '', ctaStyle: b.ctaStyle, ctaActionType: b.ctaActionType, ctaParams: b.ctaParams ?? {},
-    startsAt: toPktInput(b.startsAt), expiresAt: toPktInput(b.expiresAt),
+    designConfig: b.designConfig ?? {}, startsAt: toPktInput(b.startsAt), expiresAt: toPktInput(b.expiresAt),
   }
 }
 
@@ -39,6 +40,8 @@ export function validateBannerForm(v: BannerFormValues): Record<string, string> 
     if (v.ctaActionType === 'NONE') e.ctaActionType = 'Choose a destination, or hide the button'
   }
   if (v.startsAt && v.expiresAt && v.expiresAt <= v.startsAt) e.expiresAt = 'Must be after the start'
+  const designError = validateDesign(compactDesign(v.designConfig))
+  if (designError) e.designConfig = designError
   return e
 }
 
@@ -51,6 +54,7 @@ export function toPayload(v: BannerFormValues) {
     imagePosition: v.imagePosition, ctaEnabled: v.ctaEnabled && v.ctaActionType !== 'NONE',
     ctaLabel: v.ctaLabel.trim(), ctaStyle: v.ctaStyle, ctaActionType: v.ctaActionType,
     ctaParams: meta.param ? { [meta.param.key]: (v.ctaParams[meta.param.key] ?? '').trim() } : {},
+    designConfig: compactDesign(v.designConfig),
     startsAt: fromPktInput(v.startsAt), expiresAt: fromPktInput(v.expiresAt),
   }
 }

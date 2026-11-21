@@ -24,6 +24,9 @@ const fields = {
   ctaStyle: z.enum(CTA_STYLES),
   ctaActionType: z.enum(CTA_ACTIONS),
   ctaParams: z.record(z.string(), z.string().max(500)),
+  // Shape and limits are checked by booking-service (the authority); here only size and type.
+  designConfig: z.record(z.string(), z.unknown()).nullable().optional()
+    .refine((d) => !d || JSON.stringify(d).length <= 8000, 'Design settings are too large'),
   startsAt: when,
   expiresAt: when,
 }
@@ -52,7 +55,7 @@ const SNAKE: Record<string, string> = {
   campaignName: 'campaign_name', internalNotes: 'internal_notes', title: 'title', subtitle: 'subtitle',
   badgeText: 'badge_text', offerText: 'offer_text', imageUrl: 'image_url', imagePublicId: 'image_public_id',
   imageWidth: 'image_width', imageHeight: 'image_height', imagePosition: 'image_position', ctaEnabled: 'cta_enabled',
-  ctaLabel: 'cta_label', ctaStyle: 'cta_style', ctaActionType: 'cta_action_type', ctaParams: 'cta_params',
+  ctaLabel: 'cta_label', ctaStyle: 'cta_style', ctaActionType: 'cta_action_type', ctaParams: 'cta_params', designConfig: 'design_config',
   startsAt: 'starts_at', expiresAt: 'expires_at', version: 'version',
 }
 
@@ -75,7 +78,7 @@ export function mapBanner(r: any): BannerItem {
     title: r.title, subtitle: r.subtitle, badgeText: r.badge_text, offerText: r.offer_text,
     imageUrl: r.image_url, imagePublicId: r.image_public_id, imageWidth: r.image_width, imageHeight: r.image_height,
     imagePosition: r.image_position, ctaEnabled: r.cta_enabled, ctaLabel: r.cta_label, ctaStyle: r.cta_style,
-    ctaActionType: r.cta_action_type, ctaParams: r.cta_params ?? {}, status: r.status, isEnabled: r.is_enabled,
+    ctaActionType: r.cta_action_type, ctaParams: r.cta_params ?? {}, designConfig: r.design_config ?? null, status: r.status, isEnabled: r.is_enabled,
     state: r.state as BannerState, displayOrder: r.display_order, startsAt: iso(r.starts_at), expiresAt: iso(r.expires_at),
     publishedAt: iso(r.published_at), version: r.version, createdByEmail: r.created_by_email,
     updatedByEmail: r.updated_by_email, createdAt: iso(r.created_at)!, updatedAt: iso(r.updated_at)!,
