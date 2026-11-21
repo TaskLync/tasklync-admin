@@ -39,8 +39,12 @@ export const LIMITS = {
 /** notification-service dedups (recipient, template_key) for 30s, so refuse a relaunch inside 35s. */
 export const DUPLICATE_LAUNCH_WINDOW_SECONDS = 35
 
-/** Matches QUIET_HOURS_* in notification-service. Normal-priority push/SMS is DROPPED in this window. */
-export const QUIET_HOURS = { startHour: 22, endHour: 8, timezone: 'Asia/Karachi' } as const
+/**
+ * Matches QUIET_HOURS_* in notification-service, where normal-priority push/SMS is HELD until the window ends.
+ * Disabled: notifications go out 24 hours a day. To bring it back, set enabled: true here AND
+ * QUIET_HOURS_START/END (e.g. 22:00 / 08:00) on notification-service.
+ */
+export const QUIET_HOURS = { enabled: false, startHour: 22, endHour: 8, timezone: 'Asia/Karachi' } as const
 
 export function karachiHour(date: Date = new Date()): number {
   const part = new Intl.DateTimeFormat('en-GB', {
@@ -54,6 +58,7 @@ export function karachiHour(date: Date = new Date()): number {
 }
 
 export function isQuietHours(date: Date = new Date()): boolean {
+  if (!QUIET_HOURS.enabled) return false
   const h = karachiHour(date)
   return h >= QUIET_HOURS.startHour || h < QUIET_HOURS.endHour
 }

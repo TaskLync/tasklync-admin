@@ -44,6 +44,8 @@ export async function POST(req: NextRequest) {
       template_data: message.templateData,
       channels,
       category: 'platform', // test sends use the operational category so marketing opt-outs do not hide them
+      // A test must reach the phone now, not at 08:00. One named recipient, platform only (service enforces it).
+      priority: 'high',
       segment_type: 'custom_ids',
       segment_filter: audienceType === 'workers' ? { worker_ids: [target.id] } : { user_ids: [target.id] },
       created_by: guard.admin.adminId,

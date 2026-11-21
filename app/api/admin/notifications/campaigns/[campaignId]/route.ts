@@ -34,7 +34,9 @@ export async function GET(
     )
     if (campaignRes.rows.length === 0) return notFound()
 
-    const [deliveries, feed, errors] = await Promise.all([
+    const channels: string[] = Array.isArray(campaignRes.rows[0].channels) ? campaignRes.rows[0].channels : []
+
+    const [deliveries, feed, errors, skipReasons, notAttempted] = await Promise.all([
       db.query(
         `SELECT d.channel::text AS channel, d.status::text AS status, count(*)::int AS count
          FROM notification_deliveries d
@@ -65,6 +67,29 @@ export async function GET(
          LIMIT 5`,
         [campaignId]
       ),
+      // Why recipients were skipped (opt-out, no token...). Written by notification-service per broadcast recipient.
+      db.query(
+        `SELECT d.channel::text AS channel, COALESCE(d.error_message, 'unknown') AS reason, count(*)::int AS count
+         FROM notification_deliveries d
+         JOIN notifications n ON n.id = d.notification_id
+         WHERE n.campaign_id = $1 AND d.status::text = 'SKIPPED'
+         GROUP BY 1, 2
+         ORDER BY 3 DESC`,
+        [campaignId]
+      ),
+      // In-app recipients with NO delivery row at all for a requested channel: the channel never entered
+      // the pipeline. Non-zero means a service fault (or a campaign sent before skip tracking existed).
+      db.query(
+        `SELECT ch AS channel, count(n.id)::int AS count
+         FROM unnest($2::text[]) AS ch
+         LEFT JOIN notifications n
+           ON n.campaign_id = $1
+          AND NOT EXISTS (
+                SELECT 1 FROM notification_deliveries d
+                WHERE d.notification_id = n.id AND d.channel::text = ch)
+         GROUP BY ch`,
+        [campaignId, channels]
+      ),
     ])
 
     const r = campaignRes.rows[0]
@@ -75,6 +100,8 @@ export async function GET(
       deliveries: deliveries.rows,
       feed: { total: f.total, read: f.read, withDelivery: f.with_delivery },
       errors: errors.rows,
+      skipReasons: skipReasons.rows,
+      notAttempted: Object.fromEntries(notAttempted.rows.map((x) => [x.channel, x.count])),
     }
     return NextResponse.json(body)
   } catch (err) {

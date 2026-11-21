@@ -96,6 +96,10 @@ export interface CampaignDetail extends CampaignListItem {
   deliveries: DeliveryBreakdownRow[]
   feed: { total: number; read: number; withDelivery: number }
   errors: { channel: string; error: string | null; count: number }[]
+  /** SKIPPED delivery rows grouped by reason code (category_opt_out, no_push_token, ...). */
+  skipReasons: { channel: string; reason: string; count: number }[]
+  /** Per channel: in-app recipients with no delivery row at all, i.e. the channel never entered the pipeline. */
+  notAttempted: Record<string, number>
 }
 
 export interface NotificationKpis {

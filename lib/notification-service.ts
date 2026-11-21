@@ -21,6 +21,8 @@ export interface ServiceBroadcastPayload {
   segment_type: SegmentType
   segment_filter: Record<string, unknown>
   created_by: string
+  /** 'high' skips quiet hours. The service only accepts it with category 'platform'. Defaults to 'normal'. */
+  priority?: 'high' | 'normal'
 }
 
 export async function launchBroadcast(
