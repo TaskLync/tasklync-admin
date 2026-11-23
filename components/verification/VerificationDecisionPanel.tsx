@@ -119,7 +119,7 @@ export default function VerificationDecisionPanel({
       <ConfirmDialog
         open={dialog === 'approve'}
         title={`Approve ${name}?`}
-        description="They become Verified, appear in search results, and get a push + SMS."
+        description="They become Verified, appear in search results, and get a push notification."
         confirmLabel="Approve"
         destructive={false}
         onClose={() => setDialog(null)}

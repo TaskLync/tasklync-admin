@@ -147,7 +147,7 @@ export function RejectDialog({
   return (
     <Modal
       title={`Reject ${workerName}?`}
-      description="The worker gets a push + SMS with the reason and your note."
+      description="The worker gets a push notification with your note and the documents to replace (no SMS)."
       error={error}
       submitting={submitting}
       submitLabel="Reject application"
