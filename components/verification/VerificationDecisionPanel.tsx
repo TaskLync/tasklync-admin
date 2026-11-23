@@ -12,6 +12,7 @@ import { verificationActions } from '@/hooks/useVerification'
 import { formatDate } from '@/components/workers/worker-ui'
 import { rejectionLabel } from '@/lib/verification-constants'
 import { InfoRequestDialog, RejectDialog } from './DecisionDialogs'
+import { latestDocumentsByType } from './verification-ui'
 import type { VerificationDetail } from '@/types/verification'
 
 type DialogKind = 'approve' | 'reject' | 'info' | null
@@ -31,13 +32,15 @@ export default function VerificationDecisionPanel({
   const name = worker.name?.trim() || 'this worker'
   const pending = worker.verificationStatus === 'pending_review'
 
-  const hasIdentityDoc = documents.some(
-    (d) => (d.type === 'NATIONAL_ID' || d.type === 'PASSPORT') && d.status !== 'REJECTED'
-  )
+  // worker-service requires the latest CNIC_FRONT and CNIC_BACK uploads to be non-rejected before it
+  // approves. Checking NATIONAL_ID/PASSPORT here (old types) blocked every worker on the current app.
+  const latestDocs = latestDocumentsByType(documents)
+  const hasUsable = (type: string) => latestDocs.some((d) => d.type === type && d.status !== 'REJECTED')
+  const hasIdentityDoc = hasUsable('CNIC_FRONT') && hasUsable('CNIC_BACK')
 
   // Blockers mirror the server-side rules in approve-verification.
   const blockers: string[] = []
-  if (!hasIdentityDoc) blockers.push('No identity document (CNIC or passport) on file.')
+  if (!hasIdentityDoc) blockers.push('CNIC front and back photos are required (latest upload must not be rejected).')
   if (cnicDuplicates.length > 0) blockers.push('Another account uses this CNIC number.')
   if (worker.accountStatus === 'banned') blockers.push('This account is banned.')
 
@@ -140,6 +143,7 @@ export default function VerificationDecisionPanel({
       <RejectDialog
         open={dialog === 'reject'}
         workerName={name}
+        documents={latestDocs}
         onClose={() => setDialog(null)}
         onSubmit={async (v) => {
           await verificationActions.reject(worker.id, v)

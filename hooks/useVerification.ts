@@ -101,7 +101,13 @@ export const verificationActions = {
 
   reject: (
     workerId: string,
-    input: { reasonCode: RejectionCode; note: string; allowResubmission: boolean }
+    input: {
+      reasonCode: RejectionCode
+      note: string
+      allowResubmission: boolean
+      /** the specific documents the worker must replace (others stay as they are) */
+      rejectedDocuments?: { id: string; note?: string }[]
+    }
   ) => send('POST', `/api/admin/workers/${workerId}/actions/reject-verification`, input),
 
   requestInfo: (workerId: string, message: string) =>

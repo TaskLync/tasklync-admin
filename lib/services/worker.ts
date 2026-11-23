@@ -24,7 +24,13 @@ export const workerSvc = {
   reject: (
     workerId: string,
     admin: AdminIdentity,
-    input: { reasonCode: string; note: string; allowResubmission: boolean }
+    input: {
+      reasonCode: string
+      note: string
+      allowResubmission: boolean
+      /** documents the admin flagged; omitted = legacy (worker-service rejects every pending document) */
+      rejectedDocuments?: { id: string; note?: string }[]
+    }
   ) =>
     callService(target(), 'POST', `/internal/admin/workers/${workerId}/reject`, {
       body: {
@@ -32,6 +38,7 @@ export const workerSvc = {
         reason_code: input.reasonCode,
         note: input.note,
         allow_resubmission: input.allowResubmission,
+        ...(input.rejectedDocuments ? { rejected_documents: input.rejectedDocuments } : {}),
       },
     }),
 
@@ -78,17 +85,20 @@ export const workerSvc = {
     ),
 }
 
-/** Accepts the three URL field names worker-service may use. Never exposes the raw storage URL. */
+/**
+ * Accepts the URL field names worker-service may use. worker-service's DocumentDto sends the 15-minute
+ * signed URL as `fileUrl` and the upload time as `uploadedAt`. Never exposes the raw storage URL.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function mapSignedDocuments(summary: any): WorkerDocumentRow[] {
   const docs: any[] = summary?.documents ?? summary?.docs ?? []
   return docs.map((d) => ({
     id: d.id,
     type: d.type,
-    fileUrl: d.signed_url ?? d.signedUrl ?? d.url ?? '',
+    fileUrl: d.signed_url ?? d.signedUrl ?? d.fileUrl ?? d.url ?? '',
     status: d.status,
     rejectionNote: d.rejection_note ?? d.rejectionNote ?? null,
     reviewedAt: d.reviewed_at ?? d.reviewedAt ?? null,
-    createdAt: d.created_at ?? d.createdAt,
+    createdAt: d.created_at ?? d.createdAt ?? d.uploadedAt,
   }))
 }

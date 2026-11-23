@@ -2,9 +2,14 @@
 // Reject + Request-more-info dialogs. Same look as ConfirmDialog.
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/Button'
 import { REJECTION_REASONS, type RejectionCode } from '@/lib/verification-constants'
+import { DOC_STATUS_LABEL, DOC_TYPE_LABEL } from './verification-ui'
+import type { WorkerDocumentRow } from '@/types/worker'
+
+/** worker-service stores at most 500 characters per note */
+const NOTE_MAX = 500
 
 function Modal({
   title,
@@ -58,42 +63,78 @@ const TEXTAREA_CLASS =
 
 // ---------- Reject ----------
 
+type FlaggedDocs = Record<string, { checked: boolean; note: string }>
+
+/** Pending uploads are flagged by default (the previous behaviour); approved ones are not. */
+function defaultFlags(documents: WorkerDocumentRow[]): FlaggedDocs {
+  return Object.fromEntries(documents.map((d) => [d.id, { checked: d.status === 'PENDING', note: '' }]))
+}
+
 export function RejectDialog({
   open,
   workerName,
+  documents = [],
   onClose,
   onSubmit,
 }: {
   open: boolean
   workerName: string
+  /** latest upload per document type; the admin picks which ones the worker must replace */
+  documents?: WorkerDocumentRow[]
   onClose: () => void
   onSubmit: (v: {
     reasonCode: RejectionCode
     note: string
     allowResubmission: boolean
+    rejectedDocuments?: { id: string; note?: string }[]
   }) => Promise<void>
 }) {
   const [reasonCode, setReasonCode] = useState<RejectionCode | ''>('')
   const [note, setNote] = useState('')
   const [allowResubmission, setAllowResubmission] = useState(true)
+  const [flags, setFlags] = useState<FlaggedDocs>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Fresh defaults every time the dialog opens (documents may have changed since last time).
+  useEffect(() => {
+    if (open) setFlags(defaultFlags(documents))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   if (!open) return null
+
+  const flaggedCount = documents.filter((d) => flags[d.id]?.checked).length
 
   function reset() {
     setReasonCode('')
     setNote('')
     setAllowResubmission(true)
+    setFlags({})
     setError(null)
   }
 
+  function setFlag(id: string, patch: Partial<{ checked: boolean; note: string }>) {
+    setFlags((prev) => ({ ...prev, [id]: { ...(prev[id] ?? { checked: false, note: '' }), ...patch } }))
+  }
+
   async function submit() {
-    if (!reasonCode) return
+    if (!reasonCode || submitting) return
     setError(null)
     setSubmitting(true)
     try {
-      await onSubmit({ reasonCode, note: note.trim(), allowResubmission })
+      // Only send an explicit list when we know the documents; otherwise worker-service applies the
+      // legacy rule (every pending document rejected).
+      const rejectedDocuments =
+        documents.length > 0
+          ? documents
+              .filter((d) => flags[d.id]?.checked)
+              .map((d) => {
+                const docNote = flags[d.id]?.note.trim()
+                return docNote ? { id: d.id, note: docNote } : { id: d.id }
+              })
+          : undefined
+      await onSubmit({ reasonCode, note: note.trim(), allowResubmission, rejectedDocuments })
       reset()
       onClose()
     } catch (e: any) {
@@ -141,11 +182,51 @@ export function RejectDialog({
         <textarea
           className={TEXTAREA_CLASS}
           value={note}
-          maxLength={1000}
+          maxLength={NOTE_MAX}
           onChange={(e) => setNote(e.target.value)}
           placeholder="e.g. The back of your CNIC is blurry. Please upload a clear photo in good light."
         />
       </div>
+
+      {documents.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-gray-700">Documents the worker must replace</p>
+          <ul className="flex flex-col gap-2">
+            {documents.map((d) => {
+              const flag = flags[d.id] ?? { checked: false, note: '' }
+              return (
+                <li key={d.id} className="rounded-md border border-gray-200 px-3 py-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[#1F6F5F]"
+                      checked={flag.checked}
+                      onChange={(e) => setFlag(d.id, { checked: e.target.checked })}
+                    />
+                    <span className="flex-1">{DOC_TYPE_LABEL[d.type] ?? d.type}</span>
+                    <span className="text-xs text-gray-400">{DOC_STATUS_LABEL[d.status] ?? d.status}</span>
+                  </label>
+                  {flag.checked && (
+                    <input
+                      type="text"
+                      className="mt-2 h-8 w-full rounded-md border border-gray-300 px-2 text-xs"
+                      value={flag.note}
+                      maxLength={NOTE_MAX}
+                      onChange={(e) => setFlag(d.id, { note: e.target.value })}
+                      placeholder="What is wrong with this document? (optional, defaults to the note above)"
+                    />
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+          <p className="mt-1 text-xs text-gray-400">
+            {flaggedCount === 0
+              ? 'No document flagged: the worker keeps every upload and only fixes what your note describes.'
+              : 'Unticked documents keep their status, so the worker does not upload them again.'}
+          </p>
+        </div>
+      )}
 
       <label className="flex cursor-pointer items-start gap-2 text-sm text-gray-700">
         <input

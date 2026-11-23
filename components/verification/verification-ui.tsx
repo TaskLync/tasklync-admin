@@ -54,10 +54,24 @@ export const DECISION_VARIANT: Record<ReviewDecision, 'success' | 'danger' | 'wa
 }
 
 export const DOC_TYPE_LABEL: Record<string, string> = {
+  CNIC_FRONT: 'CNIC (front)',
+  CNIC_BACK: 'CNIC (back)',
   NATIONAL_ID: 'National ID (CNIC)',
   PASSPORT: 'Passport',
   SKILL_CERTIFICATE: 'Skill certificate',
   POLICE_CLEARANCE: 'Police clearance',
+  BUSINESS_REGISTRATION: 'Business registration',
+  NTN_CERTIFICATE: 'NTN certificate',
+}
+
+/** Newest upload of each document type: the version a review decision applies to. */
+export function latestDocumentsByType<T extends { type: string; createdAt: string }>(docs: T[]): T[] {
+  const latest = new Map<string, T>()
+  for (const d of docs) {
+    const cur = latest.get(d.type)
+    if (!cur || new Date(d.createdAt).getTime() > new Date(cur.createdAt).getTime()) latest.set(d.type, d)
+  }
+  return [...latest.values()]
 }
 
 export const DOC_STATUS_VARIANT: Record<string, 'success' | 'warning' | 'danger'> = {
