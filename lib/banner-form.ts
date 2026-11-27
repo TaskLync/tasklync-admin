@@ -5,7 +5,7 @@ import type { BannerDetail, BannerFormValues } from '@/types/banner'
 export const EMPTY_BANNER_FORM: BannerFormValues = {
   campaignName: '', internalNotes: '', title: '', subtitle: '', badgeText: '', offerText: '',
   imageUrl: null, imagePublicId: null, imageWidth: null, imageHeight: null, imagePosition: 'RIGHT',
-  ctaEnabled: true, ctaLabel: 'Book Now', ctaStyle: 'ON_DARK', ctaActionType: 'EXPLORE', ctaParams: {},
+  ctaEnabled: false, ctaLabel: 'Book Now', ctaStyle: 'ON_DARK', ctaActionType: 'EXPLORE', ctaParams: {},
   startsAt: '', expiresAt: '',
 }
 
@@ -19,11 +19,14 @@ export function fromBanner(b: BannerDetail): BannerFormValues {
   }
 }
 
-/** Client-side checks so the admin sees problems before saving. booking-service re-checks everything. */
+/**
+ * Client-side checks so the admin sees problems before saving. booking-service re-checks everything.
+ * Every piece of banner copy (badge, offer, headline, subtitle) and the button is optional: an image alone
+ * is a complete banner.
+ */
 export function validateBannerForm(v: BannerFormValues): Record<string, string> {
   const e: Record<string, string> = {}
   if (v.campaignName.trim().length < 3) e.campaignName = 'At least 3 characters'
-  if (v.title.trim().length < 3) e.title = 'At least 3 characters'
   for (const k of ['campaignName', 'internalNotes', 'title', 'subtitle', 'badgeText', 'offerText', 'ctaLabel'] as const) {
     if (v[k].trim().length > LIMITS[k]) e[k] = `At most ${LIMITS[k]} characters`
   }

@@ -221,7 +221,11 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
           </section>
 
           <section className="rounded-lg border border-gray-200 bg-white p-4">
-            <h2 className="mb-3 text-sm font-semibold text-gray-900">Banner content</h2>
+            <h2 className="mb-1 text-sm font-semibold text-gray-900">Banner content <span className="font-normal text-gray-400">(all optional)</span></h2>
+            <p className="mb-3 text-xs text-gray-500">
+              Leave everything empty for an image-only banner: the artwork shows edge to edge with nothing on top.
+              Add any text and it appears on the left, directly on the image (no overlay), so use artwork with a calm left side.
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Badge (optional)" error={shown.badgeText} count={v.badgeText.length} max={LIMITS.badgeText}>
                 <input className={inputCls} value={v.badgeText} onChange={(e) => set('badgeText', e.target.value.toUpperCase())} placeholder="SPECIAL OFFER" />
@@ -237,7 +241,7 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
                 <input className={inputCls} value={v.offerText} onChange={(e) => set('offerText', e.target.value)} placeholder="10% Off" />
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Headline" error={shown.title} count={v.title.length} max={LIMITS.title} hint="Two lines at most on the phone.">
+                <Field label="Headline (optional)" error={shown.title} count={v.title.length} max={LIMITS.title} hint="Two lines at most on the phone. Leave empty if the image already has its own text.">
                   <input className={inputCls} value={v.title} onChange={(e) => set('title', e.target.value)} placeholder="Get 10% Off on Your First Booking" />
                 </Field>
               </div>
@@ -253,7 +257,7 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
             <h2 className="mb-1 text-sm font-semibold text-gray-900">Image</h2>
             <p className="mb-3 text-xs text-gray-500">
               JPEG, PNG or WebP, up to {IMAGE_RULES.maxMb} MB, at least {IMAGE_RULES.minWidth} px wide. Recommended {IMAGE_RULES.recommended}.
-              Text sits on the left over a dark fade, so keep the subject on the right.
+              Image only? Put all your text inside the artwork. With headline or button text, the text sits on the left, so keep the subject on the right.
             </p>
             <input ref={fileRef} type="file" accept={IMAGE_RULES.types.join(',')} className="hidden" onChange={(e) => pickImage(e.target.files?.[0])} />
             {v.imageUrl ? (
@@ -319,7 +323,7 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
               <label className="flex items-center gap-2 text-sm text-gray-700 sm:col-span-2">
                 <input type="checkbox" className="accent-[#1F6F5F]" checked={v.ctaEnabled} disabled={v.ctaActionType === 'NONE'}
                   onChange={(e) => set('ctaEnabled', e.target.checked)} />
-                Show a button
+                Show a button <span className="text-gray-400">(optional)</span>
                 <span className="text-xs text-gray-400">(without it, a tap anywhere on the banner still opens the destination)</span>
               </label>
               {v.ctaEnabled && v.ctaActionType !== 'NONE' && (
@@ -373,7 +377,7 @@ export default function BannerEditor({ banner, onChanged }: { banner?: BannerDet
                 cta={v.ctaEnabled && v.ctaActionType !== 'NONE' ? { label: v.ctaLabel, style: v.ctaStyle } : null}
               />
             </div>
-            <p className="mt-2 text-xs text-gray-400">Actual size in the customer app (156 px tall). If several banners are live they swipe, with dots below.</p>
+            <p className="mt-2 text-xs text-gray-400">Actual size in the customer app (2.4:1, about 137 px tall on a typical phone). If several banners are live they swipe, with dots below.</p>
           </section>
 
           {banner && (

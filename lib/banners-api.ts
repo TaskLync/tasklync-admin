@@ -10,7 +10,7 @@ const when = z.string().datetime({ offset: true }).nullable().optional()
 const fields = {
   campaignName: z.string().trim().min(3).max(LIMITS.campaignName),
   internalNotes: opt(LIMITS.internalNotes),
-  title: z.string().trim().min(3).max(LIMITS.title),
+  title: opt(LIMITS.title), // optional: image-only banners have no headline
   subtitle: opt(LIMITS.subtitle),
   badgeText: opt(LIMITS.badgeText),
   offerText: opt(LIMITS.offerText),

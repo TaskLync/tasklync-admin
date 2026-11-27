@@ -70,7 +70,7 @@ export const IMAGE_RULES = {
   maxMb: 3,
   minWidth: 800,
   types: ['image/jpeg', 'image/png', 'image/webp'],
-  recommended: '1200 x 570 px (about 2:1)',
+  recommended: '1200 x 500 px (2.4:1)',
   minRatio: 1.5,
   maxRatio: 3.2,
 } as const

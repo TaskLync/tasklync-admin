@@ -40,6 +40,13 @@ describe('editor validation', () => {
     ctaParams: {}, startsAt: '', expiresAt: '',
   }
   it('accepts a minimal valid banner', () => expect(validateBannerForm(base)).toEqual({}))
+  it('accepts an image-only banner: no headline, no text, no button', () => {
+    expect(validateBannerForm({ ...base, title: '', ctaEnabled: false })).toEqual({})
+    expect(bannerCreateSchema.parse({
+      campaignName: 'Eid art', title: '', imagePosition: 'CENTER', ctaEnabled: false,
+      ctaStyle: 'ON_DARK', ctaActionType: 'EXPLORE', ctaParams: {},
+    }).title).toBe('')
+  })
   it('needs a destination parameter and an https link', () => {
     expect(validateBannerForm({ ...base, ctaActionType: 'CATEGORY' }).ctaParams).toBeDefined()
     expect(validateBannerForm({ ...base, ctaActionType: 'EXTERNAL_URL', ctaParams: { url: 'http://x.pk' } }).ctaParams).toMatch(/https/)
