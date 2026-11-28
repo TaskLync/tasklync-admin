@@ -37,7 +37,7 @@ describe('editor validation', () => {
     campaignName: 'Eid', internalNotes: '', title: 'Eid offer', subtitle: '', badgeText: '', offerText: '',
     imageUrl: null, imagePublicId: null, imageWidth: null, imageHeight: null, imagePosition: 'RIGHT' as const,
     ctaEnabled: true, ctaLabel: 'Book Now', ctaStyle: 'ON_DARK' as const, ctaActionType: 'EXPLORE' as const,
-    ctaParams: {}, startsAt: '', expiresAt: '',
+    ctaParams: {}, designConfig: {}, startsAt: '', expiresAt: '',
   }
   it('accepts a minimal valid banner', () => expect(validateBannerForm(base)).toEqual({}))
   it('accepts an image-only banner: no headline, no text, no button', () => {

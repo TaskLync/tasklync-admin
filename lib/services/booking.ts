@@ -109,3 +109,28 @@ export const bannerSvc = {
       target(), 'POST', '/internal/admin/banners/media', { form, headers: { 'x-admin-id': admin.id }, timeoutMs: 75_000 })
   },
 }
+/** Banner font library (families + uploaded .ttf/.otf faces). booking-service stores the files in Cloudinary. */
+export const fontSvc = {
+  list: (activeOnly = false) =>
+    callService<{ items: unknown[] }>(target(), 'GET', '/internal/admin/fonts', { query: { active: activeOnly ? 'true' : undefined } }),
+  get: (id: string) => callService(target(), 'GET', `/internal/admin/fonts/${id}`),
+  create: (admin: AdminIdentity, body: { name: string; description?: string | null }) =>
+    callService(target(), 'POST', '/internal/admin/fonts', { body: { ...who(admin), ...body } }),
+  update: (id: string, admin: AdminIdentity, body: { version: number; name?: string; description?: string | null }) =>
+    callService(target(), 'PATCH', `/internal/admin/fonts/${id}`, { body: { ...who(admin), ...body } }),
+  setActive: (id: string, admin: AdminIdentity, version: number, isActive: boolean) =>
+    callService(target(), 'PATCH', `/internal/admin/fonts/${id}/status`, { body: { ...who(admin), version, is_active: isActive } }),
+  remove: (id: string, admin: AdminIdentity) =>
+    callService<{ id: string; name: string }>(target(), 'DELETE', `/internal/admin/fonts/${id}`, { body: who(admin) }),
+  uploadVariant: (id: string, admin: AdminIdentity, file: Blob, filename: string, weight: number, style: string) => {
+    const form = new FormData()
+    form.append('weight', String(weight))
+    form.append('style', style)
+    form.append('file', file, filename)
+    return callService(target(), 'POST', `/internal/admin/fonts/${id}/variants`, {
+      form, headers: { 'x-admin-id': admin.id, 'x-admin-email': admin.email }, timeoutMs: 75_000,
+    })
+  },
+  removeVariant: (id: string, variantId: string, admin: AdminIdentity) =>
+    callService(target(), 'DELETE', `/internal/admin/fonts/${id}/variants/${variantId}`, { body: who(admin) }),
+}

@@ -14,6 +14,7 @@ const GUARDS: { prefix: string; statics: string[] }[] = [
   { prefix: '/api/admin/coupons/', statics: ['batch'] },
   { prefix: '/api/admin/promotions/', statics: ['settings'] },
   { prefix: '/api/admin/banners/', statics: ['media', 'reorder', 'placements', 'targets'] },
+  { prefix: '/api/admin/fonts/', statics: [] },
   { prefix: '/api/admin/ranking/overrides/', statics: [] },
 ]
 

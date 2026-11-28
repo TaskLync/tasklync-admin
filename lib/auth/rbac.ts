@@ -98,6 +98,10 @@ export const PERMISSIONS: Record<string, AdminRole[]> = {
   'banners:manage': ['SUPER_ADMIN', 'OPS'],       // create, edit, upload images, reorder, carousel settings
   'banners:publish': ['SUPER_ADMIN', 'OPS'],      // publish, unpublish, activate, deactivate
   'banners:delete': ['SUPER_ADMIN', 'OPS'],
+
+  // Banner font library (Settings → Brand & Typography). Fonts are files the customer app downloads.
+  'fonts:view': ['SUPER_ADMIN', 'OPS', 'FINANCE', 'SUPPORT'],
+  'fonts:manage': ['SUPER_ADMIN', 'OPS'],         // upload, rename, activate, deactivate, delete
 }
 
 // Path prefix -> permission, used by middleware.ts. Order matters (find() + startsWith): specific before general.
@@ -112,6 +116,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: '/analytics', permission: 'analytics:view' },
   { prefix: '/categories', permission: 'categories:view' },
   { prefix: '/settings/ranking', permission: 'ranking:view' }, // above '/settings/admins' and '/settings'
+  { prefix: '/settings/brand', permission: 'fonts:view' }, // above '/settings'
   { prefix: '/settings/admins', permission: 'admin_users:manage' }, // above '/settings'
   { prefix: '/settings', permission: 'settings:view' },
   { prefix: '/map', permission: 'map:view' },

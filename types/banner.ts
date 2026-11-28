@@ -1,4 +1,5 @@
 import type { BannerState, CtaAction, CtaStyle, ImagePosition } from '@/lib/banner-constants'
+import type { BannerDesign } from '@/lib/banner-design'
 
 export interface BannerItem {
   id: string
@@ -19,6 +20,8 @@ export interface BannerItem {
   ctaStyle: CtaStyle
   ctaActionType: CtaAction
   ctaParams: Record<string, string>
+  /** Typography / spacing overrides. null = the built-in look. */
+  designConfig: BannerDesign | null
   status: 'DRAFT' | 'PUBLISHED'
   isEnabled: boolean
   state: BannerState
@@ -90,6 +93,7 @@ export interface BannerFormValues {
   ctaStyle: CtaStyle
   ctaActionType: CtaAction
   ctaParams: Record<string, string>
+  designConfig: BannerDesign
   startsAt: string
   expiresAt: string
 }
